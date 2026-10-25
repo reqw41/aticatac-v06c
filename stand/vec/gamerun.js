@@ -52,7 +52,7 @@ const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
 while (frames < N) {
   if (frc >= 59904) {
-    frc -= 59904; frames++;
+    frc -= 59904; frames++; v06c.irq = true; v06c.checkInterrupt();
     for (const [f, ks] of plan) if (f === frames) { keyboard.matrix.fill(0); for (const k of ks) { const [r, b] = KEYS[k]; keyboard.matrix[r] |= b; } }
     if (frames % 50 === 0) {
       const buf = Buffer.alloc(0x8000 + 16);

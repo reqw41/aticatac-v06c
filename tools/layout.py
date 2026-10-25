@@ -74,7 +74,7 @@ for l in open(os.path.join(B, 'measure.sym')):
 sizes = [sym['ck%d_e' % i] - sym['ck%d_s' % i] for i in range(len(chunks))]
 
 holes = json.load(open(os.path.join(ROOT, 'build/l80/holes.json')))['holes']
-regions = [[a, b] for a, b in holes] + [[0x0004, 0x0100], [0x3B18, 0x3F00], [0x7C78, 0x8000], [0xE000, 0x10000]]
+regions = [[a, b] for a, b in holes] + [[0x0004, 0x0038], [0x0039, 0x0100], [0x3B18, 0x3F00], [0x7C78, 0x8000], [0xE000, 0x10000]]
 place = {}
 for i in sorted(range(len(chunks)), key=lambda i: -sizes[i]):
     for r in sorted(regions, key=lambda r: r[1] - r[0]):        # самый тесный подходящий

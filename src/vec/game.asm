@@ -11,6 +11,8 @@
 				ORG		0x0000
 				di
 				jp		start
+				ORG		0x0038				; RST 7 — только чтобы halt дождался начала кадра (палитра)
+				ret
 
 				ORG		0x0100
 				INCBIN	"../../build/cpcnew/gamecode.bin"

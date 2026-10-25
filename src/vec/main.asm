@@ -1,5 +1,5 @@
 ; main.asm: запуск и главный цикл игры на Векторе (этап 3, docs/LOGIC_PLAN.md).
-; Прерываний нет: темп — по таймеру ВИ53 (счётчик 0, период = кадр), палитра грузится один раз.
+; Темп — кадровое прерывание (ei; halt; di в начале шага), остальное время прерывания запрещены.
 
 start:			di
 				ld		sp, 0x4000
@@ -13,12 +13,33 @@ start:			di
 				ld		a, high 29952
 				out		(0x0B), a
 				call	clear_screen
+	IFDEF DEBUGB
+				ld		a, 10
+				call	dbg_border	; этап	; этап
+	ENDIF
 new_game:		call	hero_setup
+	IFDEF DEBUGB
+				ld		a, 6
+				call	dbg_border	; этап
+	ENDIF
 				call	select_game
+	IFDEF DEBUGB
+				ld		a, 8
+				call	dbg_border	; этап
+	ENDIF
 				call	clear_screen
+	IFDEF DEBUGB
+				ld		a, 10
+				call	dbg_border	; этап
+	ENDIF
 				call	forget_all
 
-main_loop:		call	wait_frame
+main_loop:
+	IFDEF DEBUGB
+				ld		a, 12				; главный цикл
+				call	dbg_border
+	ENDIF
+				call	wait_frame
 				call	read_input
 				ld		a, (C_heartbeat)		; switch_screens CPC: счётчик шагов 0..49
 				inc		a
@@ -141,35 +162,11 @@ hero_setup:		xor		a
 				ret
 hero:			DB		0
 
-; ---- таймер: кадр прошёл? (счётчик 0 считает вниз; вырос — новый период) ----
-poll_frame:		xor		a
-				out		(0x08), a
-				in		a, (0x0B)
-				ld		l, a
-				in		a, (0x0B)
-				ld		h, a
-				ex		de, hl
-				ld		hl, (pf_last)
-				ld		a, l
-				sub		e
-				ld		a, h
-				sbc		a, d					; last - now < 0 -> перезапуск периода
-				ex		de, hl
-				ld		(pf_last), hl
-				ret		nc
-				ld		hl, frames
-				inc		(hl)
+; ---- темп: шаг начинается с кадрового прерывания (обработчик 0x38 — ret; таймер ВИ53 в Emu80 так не читался)
+wait_frame:		ei
+				halt
+				di
 				ret
-wait_frame:		call	poll_frame
-				ld		a, (frames)
-				ld		hl, wf_last
-				cp		(hl)
-				jp		z, wait_frame
-				ld		(hl), a
-				ret
-pf_last:		DW		0
-frames:			DB		0
-wf_last:		DB		0
 
 ; ---- клавиатура Вектора -> keys_pressed / fire_direction / keys_fire2 (read_keys CPC) ----
 ; ряд 0: б4 влево, б5 вверх, б6 вправо, б7 вниз; ряд 7: б7 пробел (огонь 1), б2 Z (огонь 2)
@@ -303,7 +300,17 @@ clr_l:			REPT	32
 				ld		sp, hl
 				ret
 clr_ssp:			DW		0
-set_palette:	ld		a, 0x88					; порт B — выход (номер цвета палитры)
+set_palette:	ld		b, 3					; три кадра подряд: палитра пишется в обратном ходе
+sp_f:			push	bc
+				call	sp_once
+				pop		bc
+				dec		b
+				jp		nz, sp_f
+				ret
+sp_once:		ei								; дождаться прерывания кадра
+				halt
+				di
+				ld		a, 0x88					; порт B — выход (номер цвета палитры)
 				out		(0x00), a
 				ld		hl, pal_data + 15
 				ld		c, 15
@@ -324,3 +331,16 @@ sp_l:			ld		a, c
 				ld		a, 0xff
 				out		(0x03), a
 				ret
+
+	IFDEF DEBUGB
+dbg_border:		push	af
+				ld		a, 0x88
+				out		(0x00), a
+				pop		af
+				out		(0x02), a
+				ld		a, 0x8a
+				out		(0x00), a
+				ld		a, 0xff
+				out		(0x03), a
+				ret
+	ENDIF

@@ -16,7 +16,7 @@ for a, lab in p['patch']: out.append('\t\t\t\tORG\t0x%04X\n\t\t\t\tDW\t%s' % (a,
 open('build/game/patch.inc', 'w').write('\n'.join(out) + '\n')
 PY
 python3 -I tools/layout.py
-(cd src/vec && ../../tools/sjasmplus --nologo --i8080 game.asm --sym=../../build/game/aticatac.sym 2>&1 | grep -E "rror|arning" || true)
+(cd src/vec && ../../tools/sjasmplus --nologo --i8080 $SJFLAGS game.asm --sym=../../build/game/aticatac.sym 2>&1 | grep -E "rror|arning" || true)
 python3 - <<'PY'
 # квазидиск: стр. 1 — предметы комнат, стр. 2 — контуры + ключи/еда (0xA300), стр. 3 — спрайты
 edd = bytearray(0x40000)
