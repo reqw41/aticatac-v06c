@@ -1,0 +1,4 @@
+{ "name": "s1_explore",
+  "menu": [ { "frames": 150, "keys": [] }, { "frames": 10, "keys": ["SPACE"] }, { "frames": 5, "keys": [] } ],
+  "ticks": 6000,
+  "policy": { "name": "explore", "seed": 3, "fire": 0.15 } }

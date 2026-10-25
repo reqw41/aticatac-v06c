@@ -23,15 +23,9 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const CPC = require('./cpc6128');
-
-const ROOT = path.join(__dirname, '..');
-const SYM = {};
-for (const l of fs.readFileSync(path.join(ROOT, 'build/cpcsrc/rasmoutput.sym'), 'utf8').split('\n')) {
-  const m = l.match(/^(\w+) #([0-9A-F]+)/); if (m) SYM[m[1].toLowerCase()] = parseInt(m[2], 16);
-}
+const scenario = require('./scenario');
+const { SYM, ROOT } = scenario;
 const STACK_LO = 0x3e00, STACK_HI = 0x4000;    // стек игры (sp = 0x4000)
-
-function rng(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 
 function regions(m) {                           // плоские диапазоны сравниваемого состояния
   return [[0x0000, 0x4000], [m.page(1), m.page(1) + 0x4000], [m.page(5), m.page(5) + 0x4000]];
@@ -39,7 +33,7 @@ function regions(m) {                           // плоские диапазо
 
 // прогон сценария; learn = Set адресов, записанных обработчиком (заполняется), owned = Set для записи
 function run(sc, owned, learn) {
-  const m = new CPC(path.join(ROOT, 'build/cpcnew'));
+  const { m, keysFor, N } = scenario.start(sc);
   const flat = (a) => m._map(a);
   m.onWrite = (a, v, isr) => { if (isr && learn) learn.add(flat(a)); };
   let cur = null;
@@ -52,33 +46,15 @@ function run(sc, owned, learn) {
     if (!isr && cur && owned && a < 0x4000 && !skip.has(a) && owned.has(a)) cur.rd.push([a, v]);
     else if (!isr && cur && owned && a >= 0x4000 && owned.has(flat(a))) cur.rd.push([flat(a), v]);
   };
-  for (const st of sc.menu || []) { m.keysOnly(st.keys || []); m.runFrames(st.frames); }
-  m.keysOnly([]);
-  if (!m.runUntilPc(SYM.game_tasks, CPC.T_FRAME * 3000)) throw new Error('игра не началась');
-  // до границы шага
   const CGS = SYM.current_game_state;
   const regs = regions(m);
   const snap = () => regs.map(([a, b]) => m.ram.slice(a, b));
   const ticks = [];
-  const plan = [];
-  for (const st of sc.steps || []) for (let i = 0; i < st.ticks; i++) plan.push(st.keys || []);
-  const rnd = sc.random ? rng(sc.random.seed) : null;
-  let hold = 0, rkeys = [];
-  const N = sc.ticks || plan.length;
-  // первый шаг начинается со следующей границы
-  m.runUntilPc(CGS);
   let prev = snap();
   const first = prev.map((r) => Buffer.from(r).toString('base64'));
   for (let t = 0; t < N; t++) {
-    let keys;
-    if (t < plan.length) keys = plan[t];
-    else if (rnd) {
-      if (hold <= 0) {
-        rkeys = sc.random.keys.filter(() => rnd() < (sc.random.p || 0.3));
-        hold = sc.random.hold[0] + Math.floor(rnd() * (sc.random.hold[1] - sc.random.hold[0] + 1));
-      }
-      hold--; keys = rkeys;
-    } else break;
+    const keys = keysFor(t);
+    if (!keys) break;
     m.keysOnly(keys);
     const task = m.peek(CGS + 1) | m.peek(CGS + 2) << 8;
     cur = { task, rd: [], r: [], sfx: [], keys };
