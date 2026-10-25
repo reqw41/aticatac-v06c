@@ -20,7 +20,8 @@ OB_C1			equ		7
 OB_Y0			equ		8
 OB_Y1			equ		9
 OB_NEW			equ		10					; +10: видим?, запись, фаза, столбец, строка
-OBSZ			equ		16
+OB_LATE			equ		16					; отложен бюджетом кадра — в следующем кадре обязателен
+OBSZ			equ		32
 objs:			DS		OBSZ * NOBJ, 0
 
 ; ---- рамка кадра: HL = запись, A = фаза, B = 0x80+столбец, C = строка памяти y -> nb_c0, nb_c1, nb_y0, nb_y1
@@ -89,21 +90,24 @@ bl_go:			ld		(bx_mode), a
 				ld		a, MAXPAIRS
 				sub		b
 				ld		c, a					; пропуск пар
-				add		a, a
-				add		a, a
-				add		a, a
-				add		a, c					; * 9 (BX_PAIR) — оба тела одной длины
-				ld		c, a
 				ld		a, (bx_mode)
 				or		a
-				ld		a, c
 				jp		nz, bl_ov
+				ld		a, c
+				add		a, a
+				add		a, a
+				add		a, a
+				add		a, c					; * 9 (BX_PAIR)
 				add		a, low bx_body
 				ld		(bx_jp + 1), a
 				ld		a, 0
 				adc		a, high bx_body
 				jp		bl_e
-bl_ov:			add		a, low bo_body
+bl_ov:			ld		a, c
+				add		a, a
+				add		a, a
+				add		a, c					; * 5 (BO_PAIR)
+				add		a, low bo_body
 				ld		(bx_jp + 1), a
 				ld		a, 0
 				adc		a, high bo_body
@@ -164,12 +168,8 @@ bo_body:
 				DUP		MAXPAIRS
 				pop		bc
 				ld		(hl), c
-				nop
-				nop
 				dec		l
 				ld		(hl), b
-				nop
-				nop
 				dec		l
 				EDUP
 				jp		bx_next
@@ -189,6 +189,9 @@ bx_end:			xor		a
 				; замещение: нули в блоки без данных (высота строк от верха)
 				ld		a, 0xff
 				ld		(de), a
+				ld		a, (bx_h)
+				call	zf_entry
+				ld		(bx_zc + 1), hl
 				ld		de, bx_zq
 bx_z:			ld		a, (de)
 				cp		0xff
@@ -199,17 +202,32 @@ bx_z:			ld		a, (de)
 				ld		h, a
 				ld		a, (bx_top)
 				ld		l, a
-				ld		a, (bx_h)
-				ld		b, a
 				xor		a
-bx_zl:			ld		(hl), a
-				dec		l
-				dec		b
-				jp		nz, bx_zl
+bx_zc:			call	0
 				jp		bx_z
 bx_ret:			ei
 				ret
+; нули вниз от HL (A = 0): вход zf_entry(A = строк, до 24) -> HL; портит A, C
+zf_entry:		add		a, a
+				ld		c, a
+				ld		hl, zf_end
+				ld		a, l
+				sub		c
+				ld		l, a
+				ld		a, h
+				sbc		a, 0
+				ld		h, a
+				ret
+zf_body:
+				DUP		24
+				ld		(hl), a
+				dec		l
+				EDUP
+zf_end:			ret
 BX_PAIR			equ		9
+BO_PAIR			equ		5
+				ASSERT	bo_body - bx_body == MAXPAIRS * BX_PAIR + 3
+				ASSERT	bx_nd - bo_body == MAXPAIRS * BO_PAIR + 3
 bx_ph:			DB		0
 bx_mode:		DB		0
 bx_h:			DB		0
@@ -349,6 +367,9 @@ obj_s3:			OBJSPR	C_sprite3, 5
 
 ; ---- шаг вывода: новые состояния; изменившиеся объекты — по лучу: объект обновляется, когда луч уже
 ;      прошёл его строки или не дойдёт до них за время вывода (BEAM_W), иначе откладывается ----
+	IFNDEF BEAM_PAD
+BEAM_PAD		equ		12						; запас к оценке стоимости объекта, старшие байты счётчика (перебор: 4 — 17,9 % переполнений кадра, 8 — 8,1 %, 12 — 1,9 %)
+	ENDIF
 	IFNDEF BEAM_W
 BEAM_W			equ		42						; запас на вывод объекта, старшие байты счётчика (перебор: 20 — 10,6 % разрывов, 30 — 2,6 %, 42 — 0,3 %, 50 — 0,5 %)
 	ENDIF
@@ -368,9 +389,19 @@ render_sprites:	call	obj_player
 rw_l:			push	bc
 				push	hl
 				push	de
-				call	obj_window				; A = 0 — не менялся, иначе B = верх, C = низ
+				call	obj_window				; A = 0 — не менялся, иначе B = верх, C = низ, ow_cost, nb_*
 				pop		de
-				ld		(de), a
+				or		a
+				jp		z, rw_st
+				pop		hl						; отложен в прошлом кадре — флаг 2 (первым в очереди)
+				push	hl
+				push	de
+				ld		de, OB_LATE
+				add		hl, de
+				ld		a, (hl)
+				pop		de
+				inc		a
+rw_st:			ld		(de), a
 				inc		de
 				ld		a, b
 				ld		(de), a
@@ -378,6 +409,17 @@ rw_l:			push	bc
 				ld		a, c
 				ld		(de), a
 				inc		de
+				ld		a, (ow_cost)
+				ld		(de), a
+				inc		de
+				ld		hl, nb_c0
+				ld		c, 4
+rw_nb:			ld		a, (hl)
+				ld		(de), a
+				inc		hl
+				inc		de
+				dec		c
+				jp		nz, rw_nb
 				pop		hl
 				ld		bc, OBSZ
 				add		hl, bc
@@ -386,70 +428,115 @@ rw_l:			push	bc
 				jp		nz, rw_l
 				ld		a, 0
 				ld		(rs_spin), a
-rs_pass:		ld		hl, objs
-				ld		de, rs_win
-				ld		b, NOBJ
-				ld		c, 0					; сделано за проход
-				ld		a, 0
-				ld		(rs_left), a
-rs_l:			push	bc
-				ld		a, (de)
-				or		a
-				jp		z, rs_skip
-				push	hl
-				push	de
-				call	beam_hi					; A = луч
-	IFDEF NOBEAM
-				ld		a, 0xf0					; без привязки: «луч уже прошёл»
-	ENDIF
-				pop		de
-				push	de
-				inc		de
-				ld		b, a
-				ld		a, (de)					; верх окна
-				ld		c, a
-				inc		de
-				ld		a, (de)					; низ окна
-				cp		b
-				jp		c, rs_go				; луч ниже окна — уже прошёл
-				ld		a, b
-				add		a, BEAM_W
-				cp		c
-				jp		c, rs_go				; луч не успеет дойти до верха
-				pop		de
-				pop		hl
-				ld		a, 1
-				ld		(rs_left), a
-				jp		rs_skip
-rs_go:
-	IFDEF NOBEAM
-	ENDIF
-				pop		de
-				pop		hl
+; выбор следующего: из ждущих — обгоняющий луч (луч + стоимость < верха окна) с самым ранним сроком начала,
+; иначе уже пройденный лучом; никого — шаг логики или ждать луч
+rs_pass:		call	beam_hi
+				ld		(rs_beam), a
+				ld		b, a					; B = луч
+				ld		a, 0xff
+				ld		(rs_bt), a				; ключ лучшего: верх окна, пройденный — 0xFE, нет — 0xFF
 				xor		a
-				ld		(de), a
+				ld		(rs_left), a
+				ld		hl, rs_win
+				ld		c, NOBJ
+rq_l:			ld		a, (hl)
+				or		a
+				jp		z, rq_next
+				ld		(rs_left), a
+				ld		(rs_fl), a
+				push	hl
+				inc		hl
+				ld		e, (hl)					; верх
+				inc		hl
+				ld		a, (hl)					; низ
+				cp		b
+				jp		c, rq_pass				; луч уже прошёл
+				inc		hl
+				ld		a, (hl)					; стоимость
+				ld		d, a
+				add		a, b
+				jp		c, rq_pop
+				cp		e
+				jp		nc, rq_pop				; не обгонит
+				ld		a, e
+				sub		d
+				ld		e, a					; срок начала: верх - стоимость (меньше — срочнее)
+				ld		a, (rs_fl)
+				cp		2
+				jp		nz, rq_cmp
+				ld		a, e					; отложенный — раньше
+				sub		64
+				jp		nc, rq_d
+				ld		a, 1
+rq_d:			ld		e, a
+rq_cmp:			ld		a, (rs_bt)
+				cp		e
+				jp		c, rq_pop
+				jp		z, rq_pop
+				ld		a, e
+rq_take:		ld		(rs_bt), a
+				pop		hl
+				ld		(rs_best), hl
+				jp		rq_next
+rq_pass:		ld		a, (rs_fl)				; пройденный лучом: 0xFE, отложенный — 0xFD
+				cp		2
+				ld		a, 0xfd
+				jp		z, rq_pk
+				ld		a, 0xfe
+rq_pk:			ld		e, a
+				ld		a, (rs_bt)
+				cp		e
+				jp		c, rq_pop
+				jp		z, rq_pop
+				ld		a, e
+				jp		rq_take
+rq_pop:			pop		hl
+rq_next:		ld		de, RSW
+				add		hl, de
+				dec		c
+				jp		nz, rq_l
+				ld		a, (rs_bt)
+				cp		0xff
+				jp		z, rs_none
+				ld		hl, (rs_best)			; объект = objs + (окно - rs_win) * OBSZ / RSW
+				ld		de, 0 - rs_win
+				add		hl, de
+				add		hl, hl
+				add		hl, hl
+				ld		de, objs
+				add		hl, de
+				ex		de, hl
+				ld		hl, (rs_best)
+				ex		de, hl					; HL = объект, DE = окно
 				push	hl
 				push	de
-				ld		(ou_obj), hl
-				call	obj_update
+				call	rs_budget
 				pop		de
 				pop		hl
-				pop		bc
-				inc		c
-				push	bc
-rs_skip:		pop		bc
-				inc		de
-				inc		de
-				inc		de
-				push	de
-				ld		de, OBSZ
-				add		hl, de
-				pop		de
-				dec		b
-				jp		nz, rs_l
-				ld		a, (rs_left)
+				ld		a, 0
+				ld		(de), a					; окно обработано
+				ld		bc, OB_LATE
+				jp		c, rs_go
+				push	hl						; не укладывается в кадр — в следующем кадре
+				add		hl, bc
+				ld		(hl), 1
+				pop		hl
+				jp		rs_pass
+rs_go:			push	hl
+				add		hl, bc
+				ld		(hl), a
+				pop		hl
+				ld		(ou_obj), hl
+				ex		de, hl
+				ld		(ou_win), hl
+				ex		de, hl
+				call	obj_update
+				jp		rs_pass
+rs_none:		ld		a, (rs_left)
 				or		a
 				ret		z
+				call	logic_pend				; ждём луч — пока шаг логики (состояние объектов уже снято)
+				jp		nz, rs_pass
 				ld		a, (rs_spin)			; ждём луч; слишком долго (кадр сменился) — выводим как есть
 				inc		a
 				ld		(rs_spin), a
@@ -470,24 +557,80 @@ rs_f:			ld		a, (hl)
 				add		hl, hl
 				add		hl, hl
 				add		hl, hl
-				add		hl, hl					; * OBSZ (16)
+				add		hl, hl
+				add		hl, hl					; * OBSZ (32)
 				ld		de, objs
 				add		hl, de
 				ld		(ou_obj), hl
+				pop		bc
+				pop		hl
+				push	hl
+				push	bc
+				ld		(ou_win), hl
 				call	obj_update
 				pop		bc
 				pop		hl
-rs_f1:			inc		hl
-				inc		hl
-				inc		hl
+rs_f1:			ld		de, RSW
+				add		hl, de
 				dec		b
 				jp		nz, rs_f
 				ret
-rs_win:			DS		NOBJ * 3				; менялся?, верх, низ (старшие байты счётчика)
+RSW				equ		8
+rs_win:			DS		NOBJ * RSW				; менялся?, верх, низ (старшие байты счётчика), стоимость, nb_c0..nb_y1
+ou_win:			DW		0
 rs_left:		DB		0
+rs_beam:		DB		0
+rs_bt:			DB		0
+rs_fl:			DB		0
+rs_best:		DW		0
+				ASSERT	OBSZ == RSW * 4
+; бюджет кадра: HL = объект, DE = окно -> C — обновлять сейчас: герой всегда, остальные — если укладываются
+; (луч + стоимость + герой, если ещё ждёт, + шаг логики, если ещё не сделан, + панель < конца кадра)
+	IFNDEF LOGIC_HI
+LOGIC_HI		equ		19						; шаг логики, 99 % — 9,4 тыс. тактов
+	ENDIF
+	IFNDEF PANEL_HI
+PANEL_HI		equ		10						; панель и возврат в цикл
+	ENDIF
+rs_budget:		ld		a, l
+				cp		low objs
+				jp		nz, rb_1
+				ld		a, h
+				cp		high objs
+				jp		z, rb_ok				; герой — всегда
+rb_1:			inc		de
+				inc		de
+				inc		de
+				ld		a, (rs_beam)
+				ld		b, a
+				ld		a, (de)
+				add		a, b
+				jp		c, rb_no
+				ld		b, a
+				ld		a, (rs_win)				; герой ещё ждёт — его стоимость в запас
+				or		a
+				jp		z, rb_h
+				ld		a, (rs_win + 3)
+				add		a, b
+				jp		c, rb_no
+				ld		b, a
+rb_h:			ld		a, (ml_pend)
+				or		a
+				ld		a, b
+				jp		z, rb_2
+				add		a, LOGIC_HI
+				jp		c, rb_no
+rb_2:			add		a, PANEL_HI
+				jp		c, rb_no
+				cp		FRAME_HI
+				ret
+rb_ok:			scf
+				ret
+rb_no:			or		a
+				ret
 rs_spin:		DB		0
 ou_obj:			DW		0
-				ASSERT	OBSZ == 16
+				ASSERT	OBSZ == 32
 
 ; HL = объект -> A = 1 и B/C = верх/низ окна строк (старое + новое), если изменился; иначе A = 0
 obj_window:		ld		(ow_obj), hl
@@ -548,7 +691,8 @@ ow_1:			ld		a, (nb_y1)
 				cp		(hl)
 				jp		c, ow_done
 				ld		(hl), a
-ow_done:		ld		a, (ow_y0)				; строка луча = 72 + y; старшие байты = (72 + y) * 3 / 8
+ow_done:		call	ow_estimate
+				ld		a, (ow_y0)				; строка луча = 72 + y; старшие байты = (72 + y) * 3 / 8
 				call	y_hi
 				ld		b, a
 				ld		a, (ow_y1)
@@ -578,6 +722,54 @@ y_hi:			ld		l, a
 				and		0xe0
 				or		e						; / 8
 				ret
+; стоимость обновления в старших байтах счётчика: XOR старого (если нарисовано) и нового (если видимо) —
+; из записей кадров (байт фазы, единицы по 64 такта, tools/mkgame.py) + обвязка OBJ_FIX, + BEAM_PAD
+	IFNDEF OBJ_FIX
+OBJ_FIX			equ		28						; обвязка обновления объекта, единицы по 64 такта (~1,8 тыс.)
+	ENDIF
+ow_estimate:	ld		hl, OBJ_FIX
+				ld		(ow_area), hl
+				ld		hl, (ow_obj)
+				ld		a, (hl)
+				or		a
+				jp		z, oe_new
+				call	oe_add
+oe_new:			ld		hl, (ow_obj)
+				ld		de, OB_NEW
+				add		hl, de
+				ld		a, (hl)
+				or		a
+				call	nz, oe_add
+				ld		hl, (ow_area)			; / 8 -> старшие байты
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl
+				ld		a, h
+				add		a, BEAM_PAD
+				ld		(ow_cost), a
+				ret
+; HL -> (видим/нарисован, запись, фаза): ow_area += запись[15 + фаза]
+oe_add:			inc		hl
+				ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
+				inc		hl
+				ld		a, (hl)
+				ex		de, hl
+				ld		de, 15
+				add		hl, de
+				ld		e, a
+				ld		d, 0
+				add		hl, de
+				ld		e, (hl)
+				ld		hl, (ow_area)
+				add		hl, de
+				ld		(ow_area), hl
+				ret
+ow_area:		DW		0
+ow_cost:		DB		0
 ow_obj:			DW		0
 ow_y0:			DB		0
 ow_y1:			DB		0
@@ -608,19 +800,10 @@ obj_update:		ld		d, h
 				pop		hl
 				ld		(hl), 0
 				ret
-ou_vis:			ld		a, (de)
-				or		a
-				jp		z, ou_newonly
-				ld		c, 5					; сравнить запись, фазу, столбец, строку
-ou_c:			inc		hl
-				inc		de
+ou_vis:			call	nb_load					; рамка нового -> nb_* (посчитана в obj_window)
 				ld		a, (de)
-				cp		(hl)
-				jp		nz, ou_chg
-				dec		c
-				jp		nz, ou_c
-				ret								; не изменился
-ou_chg:			call	new_box					; рамка нового -> nb_*
+				or		a
+				jp		z, ou_newonly			; изменился (иначе obj_update не вызывается)
 				call	can_replace
 				jp		nz, ou_xor
 				; замещение на месте: новая рамка целиком, потом уходящие края старой
@@ -631,8 +814,7 @@ ou_chg:			call	new_box					; рамка нового -> nb_*
 				jp		ou_store
 ou_xor:			ld		hl, (ou_obj)
 				call	obj_xor					; стереть старое
-ou_newonly:		call	new_box
-				ld		hl, (ou_obj)
+ou_newonly:		ld		hl, (ou_obj)
 				call	new_args
 				call	blit_x					; нарисовать новое
 ; нарисованное = новое, рамка — nb_*
@@ -660,6 +842,22 @@ ou_cb:			ld		a, (hl)
 				jp		nz, ou_cb
 				ret
 
+; рамка нового из окна объекта (ou_win + 4) -> nb_*; DE сохраняется
+nb_load:		ld		hl, (ou_win)
+				ld		bc, 4
+				add		hl, bc
+				ld		a, (hl)
+				ld		(nb_c0), a
+				inc		hl
+				ld		a, (hl)
+				ld		(nb_c1), a
+				inc		hl
+				ld		a, (hl)
+				ld		(nb_y0), a
+				inc		hl
+				ld		a, (hl)
+				ld		(nb_y1), a
+				ret
 ; рамка нового кадра объекта (ou_obj) -> nb_*
 new_box:		ld		hl, (ou_obj)
 				call	new_args
@@ -741,9 +939,9 @@ rp_4:			ld		(uy1), a
 				cp		40
 				jp		nc, rp_no
 				; фон: группы uy0>>3 .. uy1>>3 по столбцам uc0..uc1
-				ld		a, (uc0)
+				ld		a, (uc0)				; bgraw[c * 24 + g]
 				ld		c, a
-rp_col:			ld		l, c					; bgraw[c * 24 + g]
+				ld		l, a
 				ld		h, 0
 				add		hl, hl
 				add		hl, hl
@@ -769,18 +967,26 @@ rp_col:			ld		l, c					; bgraw[c * 24 + g]
 				and		0x1f
 				sub		e
 				inc		a
+				ld		(rp_n), a
+				ld		a, (uc1)
+				sub		c
+				inc		a
+				ld		c, a					; столбцов
+				ld		de, 24
+rp_col:			push	hl
+				ld		a, (rp_n)
 				ld		b, a
-rp_g:			ld		a, (hl)
-				or		a
-				jp		nz, rp_no
+				xor		a
+rp_g:			or		(hl)
 				inc		hl
 				dec		b
 				jp		nz, rp_g
-				ld		a, (uc1)
-				cp		c
-				jp		z, rp_obj
-				inc		c
-				jp		rp_col
+				pop		hl
+				or		a
+				jp		nz, rp_no
+				add		hl, de
+				dec		c
+				jp		nz, rp_col
 				; другие нарисованные объекты
 rp_obj:			ld		hl, objs
 				ld		b, NOBJ
@@ -829,6 +1035,7 @@ rp_onext:		pop		hl
 				ret
 rp_no:			or		1						; NZ
 				ret
+rp_n:			DB		0
 uc0:			DB		0
 uc1:			DB		0
 uy0:			DB		0
@@ -891,8 +1098,11 @@ zero_rows:		ld		a, e
 				cp		d
 				ret		c
 				sub		d
-				inc		a
-				ld		b, a					; строк
+				inc		a						; строк
+				push	de
+				call	zf_entry
+				ld		(zr_c + 1), hl
+				pop		de
 				ld		a, d
 				cpl
 				add		a, ROW0 + 1
@@ -902,13 +1112,8 @@ zero_rows:		ld		a, e
 				ld		h, a
 				ld		c, 3
 zr_pl:			push	hl
-				push	bc
 				xor		a
-zr_l:			ld		(hl), a
-				dec		l
-				dec		b
-				jp		nz, zr_l
-				pop		bc
+zr_c:			call	0
 				pop		hl
 				ld		a, h
 				add		a, 0x20

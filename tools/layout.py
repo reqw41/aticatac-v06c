@@ -13,7 +13,7 @@ import json, os, re, subprocess, sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 B = os.path.join(ROOT, 'build/game')
 SJ = os.path.join(ROOT, 'tools/sjasmplus')
-CODE = ['src/vec/main.asm', 'src/vec/spr.asm', 'src/vec/roomdraw.asm', 'src/vec/sound_game.asm'] + \
+CODE = ['src/vec/main.asm', 'src/vec/spr.asm', 'src/vec/roomdraw.asm', 'src/vec/sound_game.asm', 'src/vec/panel.asm'] + \
     ['src/i8080/%s.asm' % m for m in ('playermove', 'util', 'weapon', 'sprite', 'boss', 'doors', 'items', 'room',
                                        'food', 'chicken', 'player', 'collectables', 'clock', 'state', 'game')]
 DATA = ['build/room/items.inc', 'build/game/sprites.inc', 'build/room/pal.inc', 'build/l80/item_wh.inc']
@@ -64,7 +64,7 @@ m = PRE + ['\t\t\t\tORG\t0x0000']
 for i, c in enumerate(chunks):
     m += ['ck%d_s:' % i, '\t\t\t\tINCLUDE\t"%s"' % c, 'ck%d_e:' % i]
 open(os.path.join(B, 'measure.asm'), 'w').write('\n'.join(m) + '\n')
-r = subprocess.run([SJ, '--nologo', '--i8080', 'measure.asm', '--sym=measure.sym'], cwd=B, capture_output=True, text=True)
+r = subprocess.run([SJ, '--nologo', '--i8080'] + os.environ.get('SJFLAGS', '').split() + ['measure.asm', '--sym=measure.sym'], cwd=B, capture_output=True, text=True)
 if 'Errors: 0' not in r.stdout + r.stderr:
     print(r.stdout[-3000:], r.stderr[-3000:]); sys.exit(1)
 sym = {}

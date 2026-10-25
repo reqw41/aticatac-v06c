@@ -49,7 +49,7 @@ let frc = 0, frames = 0, tacc = 0, total = 0;
 const N = +NF;
 let lastTicks = 0, lastT = 0;
 const tk = S.main_loop;
-let loops = 0, tickT = []; let updRet = -1, updSp = -1; let nRep = 0, nXor = 0, nNew = 0; let bgSnap = null, rooms = 0, echkDone = false; let irqUntil = -1, irqOk = 0, irqLost = 0; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
+let loops = 0, tickT = []; let updRet = -1, updSp = -1; let nRep = 0, nXor = 0, nNew = 0, nRend = 0; let bgSnap = null, rooms = 0, echkDone = false; let irqUntil = -1, irqOk = 0, irqLost = 0; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
 const exS = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0]));
 const labsS = Object.entries(S).filter(([k]) => !exS.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]);
 const nmOf = (p) => { let r='?'; for (const [k,v] of labsS) { if (v<=p) r=k+'+'+(p-v); else break; } return r; };
@@ -57,6 +57,9 @@ const STK = ['blit_x', 'draw_item', 'clear_room', 'ol_pass', 'clear_screen'];
 const inStackCode = (pc) => { const n = nmOf(pc).split('+')[0]; return STK.includes(n) || /^(bx_|dt_|cr_|ol_|clr_)/.test(n); };
 const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
+let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
+const fnAt = {}, fnOpen = {}, fnSum = {}, fnHist = {}, loopH = [], loopH2 = []; let loopT0 = 0, loopRoom = false;
+for (const n of ['wait_frame', 'logic_step', 'collect_events', 'apply_events', 'render_sprites', 'panel_update']) if (S[n] !== undefined) fnAt[S[n]] = n;
 while (frames < N) {
   if (frc >= 59904) {
     frc -= 59904; frames++; irqUntil = 64;          // как на железе и в Emu80: под DI прерывание теряется
@@ -79,31 +82,58 @@ while (frames < N) {
   if (S.room_drawn !== undefined && (cpu.pc === S.room_drawn || cpu.pc === S.bg_changed)) { bgSnap = Buffer.alloc(0x6000); for (let a = 0; a < 0x6000; a++) bgSnap[a] = rd(0x8000 + a); rooms++; }
   if (S.echk_stop !== undefined && cpu.pc === S.echk_stop && !echkDone) {
     echkDone = true; let bad = 0, first = -1;
-    for (let a = 0; a < 0x6000; a++) if (rd(0x8000 + a) !== bgSnap[a]) { bad++; if (first < 0) first = a; }
-    console.log(`ECHK: смен комнаты ${rooms}, отличий от фона ${bad}` + (bad ? ` (первое: плоскость ${first >> 13} столбец ${(first >> 8) & 31} строка ${first & 255})` : ''));
+    for (let a = 0; a < 0x6000; a++) if (((a >> 8) & 31) < 24 && rd(0x8000 + a) !== bgSnap[a]) { bad++; if (first < 0) first = a; }
+    console.log(`ECHK: смен комнаты ${rooms}, отличий от фона (поле, без панели) ${bad}` + (bad ? ` (первое: плоскость ${first >> 13} столбец ${(first >> 8) & 31} строка ${first & 255})` : ''));
   }
-  if (cpu.pc === S.obj_update && !upd) { upd = { r0: 999, r1: -1, b0: beamRow(), f0: frames, rows: new Set() }; updRet = memory.bytes[memory.tobank(cpu.sp)] | memory.bytes[memory.tobank((cpu.sp + 1) & 0xffff)] << 8; updSp = cpu.sp; }
+  if (process.env.RTRACE) {
+    if (cpu.pc === S.render_sprites) rtCur = { t0: total, f: frames, b: beamRow(), u: [], lg: 0 };
+    if (rtCur && cpu.pc === S.logic_step) rtCur.lg++;
+    if (rtCur && cpu.pc === S.panel_update) { rtCur.d = total - rtCur.t0; if (rtCur.d > 59904 - 9000 && rtList.length < 40) rtList.push(rtCur); rtAll.push(rtCur); rtCur = null; }
+    if (upd && cpu.pc === S.zero_leftover) upd.kind = 'R'; else if (upd && cpu.pc === S.ou_xor) upd.kind = 'X'; else if (upd && cpu.pc === S.ou_newonly && !upd.kind) upd.kind = 'N';
+  }
+  if (process.env.ONE && upd && oneN < 3) { const n = nmOf(cpu.pc).split('+')[0]; oneP[n] = (oneP[n] || 0) + 1; }
+  if (cpu.pc === S.obj_update && !upd) { upd = { t0: total, kind: '', r0: 999, r1: -1, b0: beamRow(), f0: frames, rows: new Set() }; updRet = memory.bytes[memory.tobank(cpu.sp)] | memory.bytes[memory.tobank((cpu.sp + 1) & 0xffff)] << 8; updSp = cpu.sp; }
   if (upd) { const b = beamRow(); if (b >= 0) upd.rows.add(b); }
   if (upd && cpu.pc === updRet && cpu.sp === ((updSp + 2) & 0xffff)) {
+    if (process.env.ONE && oneN < 3) { if (upd.kind === 'X' && (rd(S.ou_obj) | rd(S.ou_obj + 1) << 8) === S.objs && frames > 200) { oneN++; console.log('X героя', total - upd.t0, JSON.stringify(oneP)); } oneP = {}; }
+    if (process.env.RTRACE && rtCur) { const o = (rd(S.ou_obj) | rd(S.ou_obj + 1) << 8) - S.objs >> 4; rtCur.u.push(o + ':' + upd.kind + ':' + (total - upd.t0)); }
     if (upd.r1 >= 0) { updN++; let hit = false; for (const r of upd.rows) if (r >= upd.r0 && r <= upd.r1) { hit = true; break; } if (hit) updTear++; }
     upd = null;
   }
+  if (cpu.pc === S.render_sprites) nRend++;
+  if (process.env.LOOPST) {
+    if (fnAt[cpu.pc] && !fnOpen[cpu.pc]) fnOpen[cpu.pc] = { t: total, ret: memory.bytes[memory.tobank(cpu.sp)] | memory.bytes[memory.tobank((cpu.sp + 1) & 0xffff)] << 8, sp: (cpu.sp + 2) & 0xffff };
+    for (const k in fnOpen) { const o = fnOpen[k]; if (o && cpu.pc === o.ret && cpu.sp === o.sp) { const d = total - o.t; const n = fnAt[k]; fnSum[n] = (fnSum[n] || 0) + d; (fnHist[n] = fnHist[n] || []).push(d); fnOpen[k] = null; if (n === 'wait_frame') { if (loopT0) { loopH.push(o.t - loopT0); if (!loopRoom) loopH2.push(o.t - loopT0); } loopT0 = total; loopRoom = false; } if (n === 'apply_events' && d > 20000) loopRoom = true; } }
+  }
   if (cpu.pc === S.zero_leftover) nRep++; else if (cpu.pc === S.ou_xor) nXor++; else if (cpu.pc === S.ou_newonly) nNew++;
-  if (cpu.pc === S.ml_once) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
+  if (cpu.pc === S.logic_step) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
   if (irqUntil >= 0) {
     if (cpu.iff) { v06c.irq = true; v06c.checkInterrupt(); irqUntil = -1; irqOk++; }
     else if (frc >= irqUntil) { irqUntil = -1; irqLost++; }
   }
   const pc0 = cpu.pc;
   const c = (cpu.instruction(), cpu.vcycles); frc += c; total += c; tacc += c;
-  if (process.env.PROF) { let n = profCache.get(pc0); if (!n) { n = nmOf(pc0).split('+')[0]; profCache.set(pc0, n); } prof[n] = (prof[n] || 0) + c; }
+  if (process.env.PROF && (!process.env.PROFR || (process.env.PROFR === '1' ? fnOpen[S.render_sprites] : upd))) { let n = profCache.get(pc0); if (!n) { n = nmOf(pc0).split('+')[0]; profCache.set(pc0, n); } prof[n] = (prof[n] || 0) + c; }
   if (tacc > 1) { const tn = tacc >> 1; tacc -= tn * 2; timer.Count(tn); }
   if (cpu.last_opcode === 0xd3) io.commit();
 }
-if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
+if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, +process.env.PROFN || 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
+if (process.env.LOOPST) {
+  const q = (a, f) => { a = a.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(a.length * f))]; };
+  for (const n in fnHist) { const a = fnHist[n]; console.log(n.padEnd(16), 'вызовов', a.length, 'среднее', Math.round(fnSum[n] / a.length), 'медиана', q(a, 0.5), '90%', q(a, 0.9), '99%', q(a, 0.99)); }
+  const b = [0, 0, 0, 0, 0]; for (const d of loopH) b[Math.min(4, Math.floor(d / 59904))]++;
+  { const n2 = loopH2.length, over = loopH2.filter((d) => d > 59904).length; console.log(`без смен комнаты: циклов ${n2}, дольше кадра ${over} (${(over / n2 * 100).toFixed(1)}%)`); }
+  console.log('работа цикла (без ожидания), кадров: <1', b[0], '1..2', b[1], '2..3', b[2], '3..4', b[3], '>=4', b[4], 'медиана', q(loopH, 0.5), '90%', q(loopH, 0.9));
+}
+if (process.env.RTRACE) {
+  for (const r of rtList) console.log('кадр', r.f, 'луч', r.b, 'вывод', r.d, 'логики', r.lg, r.u.join(' '));
+  const st = {}; for (const r of rtAll) for (const u of r.u) { const [o, k, d] = u.split(':'); const key = o + k; (st[key] = st[key] || []).push(+d); }
+  for (const k of Object.keys(st).sort()) { const a = st[k].sort((x, y) => x - y); console.log('объект', k, 'раз', a.length, 'медиана', a[a.length >> 1], 'макс', a[a.length - 1]); }
+}
 tickT.sort((a, b) => a - b);
 console.log(`обновлений: замещение на месте ${nRep}, XOR ${nXor}, появление ${nNew}; луч прошёл по строкам объекта во время обновления: ${updTear} из ${updN} (${(updTear / updN * 100).toFixed(1)}%)`);
 console.log(`прерываний: дошло ${irqOk}, потеряно ${irqLost}; игра заметила потерянных ${rd(S.lost_frames) | rd(S.lost_frames + 1) << 8}`);
+console.log(`выводов картинки ${nRend} (${(nRend / frames * 50).toFixed(1)} в с)`);
 console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);
 console.log('pc', cpu.pc.toString(16), 'objs', [...Array(72).keys()].map((i) => rd(S.objs + i).toString(16)).join(' '));
 console.log('player_growing', rd(0xF8C), 'sprite1 state', rd(0x29BC + 10), 'x', rd(0x29BC), 'y', rd(0x29BD));

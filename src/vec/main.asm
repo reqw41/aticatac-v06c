@@ -33,16 +33,18 @@ new_game:		di
 				call	dbg_border	; этап
 	ENDIF
 				call	forget_all
+				call	panel_init
 
 main_loop:		call	wait_frame				; A = сколько кадров прошло (1 или больше)
-				cp		2
-				jp		c, ml_once
-				call	logic_step				; не успели — один догоняющий шаг логики без вывода
-				call	collect_events
-ml_once:		call	logic_step
-				call	collect_events
-				call	apply_events
-				call	render_sprites
+				cp		5
+				jp		c, ml_n
+				ld		a, 4					; не больше 4 шагов подряд (после долгой отрисовки комнаты)
+ml_n:			ld		(ml_pend), a			; шагов логики за прошедшие кадры — ровно 50 в секунду
+				call	apply_events			; сразу после прерывания — вывод (луч ещё над картинкой)
+				call	render_sprites			; по состоянию прошлого шага; пока объект ждёт луч, вывод
+				call	panel_update			; сам делает шаг логики (logic_pend)
+ml_l:			call	logic_pend
+				jp		nz, ml_l
 	IFDEF ECHK
 				ld		hl, (echk_n)			; проверка стенда: после ECHK шагов стереть всё и встать
 				inc		hl
@@ -59,6 +61,17 @@ echk_n:			DW		0
 	ENDIF
 				jp		main_loop
 
+; шаг логики, если ещё должны (ml_pend); NZ — шаг сделан
+logic_pend:		ld		a, (ml_pend)
+				or		a
+				ret		z
+				dec		a
+				ld		(ml_pend), a
+				call	logic_step
+				call	collect_events
+				or		1
+				ret
+ml_pend:		DB		0
 ; шаг логики: ввод, heartbeat, часы, звук, задача состояния
 logic_step:		call	read_input
 				ld		a, (C_heartbeat)		; switch_screens CPC: счётчик шагов 0..49
