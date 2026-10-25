@@ -13,7 +13,8 @@ render_room:	ld		a, (C_room_number)
 dr_room:		DB		0
 
 ; поле CPC 96x192 пикселей = столбцы 0..23, строки памяти ROW0-191..ROW0, 3 плоскости: PUSH нулей
-clear_room:		ld		hl, 0
+clear_room:		di								; SP — указатель записи
+				ld		hl, 0
 				add		hl, sp
 				ld		(cr_ssp), hl
 				ld		bc, 0
@@ -35,6 +36,7 @@ cr_col:			ld		sp, hl
 				jp		nz, cr_col
 				ld		hl, (cr_ssp)
 				ld		sp, hl
+				ei
 				ret
 cr_ssp:			DW		0
 
@@ -105,7 +107,8 @@ do_col:			ld		a, b
 				ld		c, 0x40
 				ret		z
 ; проход по списку контура в плоскость со смещением C (старший байт адреса)
-ol_pass:		ld		a, c
+ol_pass:		di								; стековый режим квазидиска
+				ld		a, c
 				ld		(ol_off + 1), a
 				ld		hl, 0
 				add		hl, sp
@@ -129,6 +132,7 @@ ol_off:			add		a, 0
 				out		(0x10), a
 				ld		hl, (ol_ssp)
 				ld		sp, hl
+				ei
 				ret
 do_slot:		DB		0
 ol_cnt:			DW		0
@@ -281,7 +285,8 @@ cv_trap:		ld		a, b
 
 ; ---- предмет: HL = описатель, D = 0x80 + столбец, E = верхняя строка памяти.
 ;      (экран & ~маска) | данные, данные POP из квазидиска ----
-draw_item:		ld		a, (hl)
+draw_item:		di								; стековый режим квазидиска
+				ld		a, (hl)
 				ld		(dt_page + 1), a
 				inc		hl
 				ld		c, (hl)
@@ -364,6 +369,7 @@ dt_pe:			ld		a, (dt_h)
 				out		(0x10), a
 				ld		hl, (dt_ssp)
 				ld		sp, hl
+				ei
 				ret
 dt_rows:		DB		0
 dt_clear:		DB		0

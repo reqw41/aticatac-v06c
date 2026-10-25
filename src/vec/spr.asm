@@ -15,7 +15,16 @@ OBSZ			equ		12
 objs:			DS		OBSZ * NOBJ, 0
 
 ; ---- XOR-вывод кадра: HL = запись кадра, A = фаза, D = 0x80 + столбец, E = строка памяти y ----
-blit_x:			push	de
+BLIT_COST		equ		14						; старших байтов счётчика (~7 тыс. тактов) — с запасом на кадр
+blit_x:			push	af
+				push	hl
+				push	de
+				ld		a, BLIT_COST
+				call	di_guard
+				pop		de
+				pop		hl
+				pop		af
+				push	de
 				add		a, a
 				ld		(bx_ph), a
 				ld		a, (hl)					; высота (чётная) -> вход в развёрнутый цикл
@@ -87,6 +96,7 @@ bx_end:			xor		a
 				out		(0x10), a
 				ld		hl, (bx_ssp)
 				ld		sp, hl
+				ei
 				ret
 BX_PAIR			equ		9
 bx_ph:			DB		0

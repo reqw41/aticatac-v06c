@@ -42,7 +42,7 @@ let frc = 0, frames = 0, tacc = 0, total = 0;
 const N = +NF;
 let lastTicks = 0, lastT = 0;
 const tk = S.main_loop;
-let loops = 0, tickT = []; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
+let loops = 0, tickT = []; let irqUntil = -1, irqOk = 0, irqLost = 0; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
 const exS = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0]));
 const labsS = Object.entries(S).filter(([k]) => !exS.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]);
 const nmOf = (p) => { let r='?'; for (const [k,v] of labsS) { if (v<=p) r=k+'+'+(p-v); else break; } return r; };
@@ -52,9 +52,9 @@ const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
 while (frames < N) {
   if (frc >= 59904) {
-    frc -= 59904; frames++; v06c.irq = true; v06c.checkInterrupt();
+    frc -= 59904; frames++; irqUntil = 64;          // как на железе и в Emu80: под DI прерывание теряется
     for (const [f, ks] of plan) if (f === frames) { keyboard.matrix.fill(0); for (const k of ks) { const [r, b] = KEYS[k]; keyboard.matrix[r] |= b; } }
-    if (frames % 50 === 0) {
+    if (frames % (+process.env.SHOTN || 50) === 0) {
       const buf = Buffer.alloc(0x8000 + 16);
       for (let a = 0; a < 0x8000; a++) buf[a] = rd(0x8000 + a);
       for (let i = 0; i < 16; i++) buf[0x8000 + i] = rd(S.pal_data + i);
@@ -69,7 +69,11 @@ while (frames < N) {
     spHist.push(cpu.pc); if (spHist.length > 12) spHist.shift();
   }
   if (process.env.TRACE) { hist.push(cpu.pc + 0x10000 * cpu.sp); if (hist.length > 60) hist.shift(); if (!okpc[cpu.pc]) { const ex = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0])); const labs = Object.entries(S).filter(([k]) => !ex.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]); const nm = (p) => { let r='?'; for (const [k,v] of labs) { if (v<=p) r=k+'+'+(p-v); else break; } return r; }; console.log(hist.map((q)=>{const p=q&0xffff, sp=Math.floor(q/0x10000); return p.toString(16)+' sp '+sp.toString(16)+' '+nm(p);}).join('\n')); process.exit(1); } }
-  if (cpu.pc === tk) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
+  if (cpu.pc === S.ml_once) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
+  if (irqUntil >= 0) {
+    if (cpu.iff) { v06c.irq = true; v06c.checkInterrupt(); irqUntil = -1; irqOk++; }
+    else if (frc >= irqUntil) { irqUntil = -1; irqLost++; }
+  }
   const pc0 = cpu.pc;
   const c = (cpu.instruction(), cpu.vcycles); frc += c; total += c; tacc += c;
   if (process.env.PROF) { let n = profCache.get(pc0); if (!n) { n = nmOf(pc0).split('+')[0]; profCache.set(pc0, n); } prof[n] = (prof[n] || 0) + c; }
@@ -78,6 +82,7 @@ while (frames < N) {
 }
 if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
 tickT.sort((a, b) => a - b);
+console.log(`прерываний: дошло ${irqOk}, потеряно ${irqLost}; игра заметила потерянных ${rd(S.lost_frames) | rd(S.lost_frames + 1) << 8}`);
 console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);
 console.log('pc', cpu.pc.toString(16), 'objs', [...Array(72).keys()].map((i) => rd(S.objs + i).toString(16)).join(' '));
 console.log('player_growing', rd(0xF8C), 'sprite1 state', rd(0x29BC + 10), 'x', rd(0x29BC), 'y', rd(0x29BD));

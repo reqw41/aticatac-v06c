@@ -6,18 +6,18 @@ start:			di
 				ld		a, 0xff
 				out		(0x03), a
 				call	set_palette
-				ld		a, 0x34					; ВИ53 счётчик 0: режим 2, делитель 29952 = кадр
+				ld		a, 0x30					; ВИ53 счётчик 0: режим 0 (перезаряжает ISR)
 				out		(0x08), a
-				xor		a
+				ld		a, 0xff
 				out		(0x0B), a
-				ld		a, high 29952
 				out		(0x0B), a
 				call	clear_screen
 	IFDEF DEBUGB
 				ld		a, 10
 				call	dbg_border	; этап	; этап
 	ENDIF
-new_game:		call	hero_setup
+new_game:		di
+				call	hero_setup
 	IFDEF DEBUGB
 				ld		a, 6
 				call	dbg_border	; этап
@@ -34,13 +34,19 @@ new_game:		call	hero_setup
 	ENDIF
 				call	forget_all
 
-main_loop:
-	IFDEF DEBUGB
-				ld		a, 12				; главный цикл
-				call	dbg_border
-	ENDIF
-				call	wait_frame
-				call	read_input
+main_loop:		call	wait_frame				; A = сколько кадров прошло (1 или больше)
+				cp		2
+				jp		c, ml_once
+				call	logic_step				; не успели — один догоняющий шаг логики без вывода
+				call	collect_events
+ml_once:		call	logic_step
+				call	collect_events
+				call	apply_events
+				call	render_sprites
+				jp		main_loop
+
+; шаг логики: ввод, heartbeat, часы, звук, задача состояния
+logic_step:		call	read_input
 				ld		a, (C_heartbeat)		; switch_screens CPC: счётчик шагов 0..49
 				inc		a
 				cp		50
@@ -61,10 +67,7 @@ ml_3:			ld		a, (C_room_changed)
 				ld		(was_rc), a
 				ld		hl, (C_current_game_state + 1)
 				ld		(was_task), hl
-				call	run_task
-				call	post_events
-				call	render_sprites
-				jp		main_loop
+				jp		run_task
 was_rc:			DB		0
 was_task:		DW		0
 
@@ -92,57 +95,145 @@ end_task_v:		ld		a, (C_end_key_delay)
 				pop		hl						; из run_task
 				jp		new_game
 
-; события вывода после шага логики
-post_events:	ld		hl, (was_task)
+; события вывода: собираются после каждого шага логики (их признаки логика сбрасывает на следующем
+; шаге, а догоняющий шаг идёт без вывода), применяются один раз перед выводом спрайтов
+collect_events:	ld		hl, (was_task)
 				ld		a, (was_rc)
 				or		a
-				jp		z, pe_1
-				JPHL	C_game_tasks, pe_room	; draw_room в этом шаге
-pe_1:			ld		hl, (was_task)
-				JPHL	C_falling_tasks, pe_fall
+				jp		z, ce_1
+				JPHL	C_game_tasks, ce_room	; draw_room в этом шаге
+ce_1:			ld		hl, (was_task)
+				JPHL	C_falling_tasks, ce_fall
 				ld		hl, (C_current_game_state + 1)
-				JPHL	C_falling_tasks, pe_tofall
-				jp		pe_items
-pe_fall:		ld		hl, (C_current_game_state + 1)
-				JPHL	C_game_tasks, pe_room	; падение кончилось — комната
+				JPHL	C_falling_tasks, ce_tofall
+				jp		ce_items
+ce_fall:		ld		hl, (C_current_game_state + 1)
+				JPHL	C_game_tasks, ce_room	; падение кончилось — комната
 				ret
-pe_tofall:		ld		hl, (was_task)			; только что начали падать — поле пустое
-				JPHL	C_falling_tasks, pe_ret
-				call	clear_room
-				jp		forget_all
-pe_ret:			ret
-pe_room:		call	render_room
-				jp		forget_all
-pe_items:		ld		hl, (C_door_to_toggle)
+ce_tofall:		ld		a, 1					; только что начали падать — очистить поле
+				ld		(ev_clear), a
+				ret
+ce_room:		ld		a, 1
+				ld		(ev_room), a
+				ret
+ce_items:		ld		hl, (C_door_to_toggle)
 				ld		a, h
 				or		l
-				jp		z, pe_2
-				push	hl
-				call	erase_all
-				pop		hl
-				call	draw_list_item
-pe_2:			ld		hl, (C_erase_food_with_index)
+				ld		de, ev_doors
+				call	nz, ev_push
+				ld		hl, (C_erase_food_with_index)
 				ld		a, h
 				or		l
-				jp		z, pe_3
-				push	hl
-				call	erase_all
-				pop		hl
-				call	erase_food_item
-pe_3:			ld		hl, (C_draw_tombstone_with_index)
+				ld		de, ev_foods
+				call	nz, ev_push
+				ld		hl, (C_draw_tombstone_with_index)
 				ld		a, h
 				or		l
-				jp		z, pe_4
-				push	hl
-				call	erase_all
-				pop		hl
-				call	draw_food_item
-pe_4:			ld		a, (C_do_pockets)
+				jp		z, ce_2
+				ld		(ev_tomb), hl
+ce_2:			ld		a, (C_do_pockets)
 				cp		2
 				ret		nz
-				call	erase_all				; предмет взят/брошен — перерисовать комнату (пока так)
-				call	render_room
-				jp		forget_all
+				jp		ce_room					; предмет взят/брошен — перерисовать комнату (пока так)
+; DE = список (счётчик, 4 слова), HL — в конец
+ev_push:		ld		a, (de)
+				cp		4
+				ret		nc
+				inc		a
+				ld		(de), a
+				dec		a
+				add		a, a
+				inc		a
+				add		a, e
+				ld		e, a
+				jp		nc, ep_1
+				inc		d
+ep_1:			ex		de, hl
+				ld		(hl), e
+				inc		hl
+				ld		(hl), d
+				ret
+ev_room:		DB		0
+ev_clear:		DB		0
+ev_tomb:		DW		0
+ev_doors:		DB		0
+				DW		0, 0, 0, 0
+ev_foods:		DB		0
+				DW		0, 0, 0, 0
+
+apply_events:	ld		a, (ev_room)
+				or		a
+				jp		z, ae_1
+				call	render_room				; долго под DI: прерывания терялись —
+				call	forget_all
+				call	ev_reset
+resync:			ei								; дождаться прерывания (счётчик перезарядится)
+				halt
+				ld		a, (frames)
+				ld		(wf_last), a
+				ret
+ae_1:			ld		a, (ev_clear)
+				or		a
+				jp		z, ae_2
+				call	clear_room
+				call	forget_all
+				call	ev_reset
+				jp		resync
+ae_2:			ld		a, (ev_doors)
+				ld		b, a
+				ld		a, (ev_foods)
+				or		b
+				ld		hl, (ev_tomb)
+				or		h
+				or		l
+				ret		z
+				call	erase_all
+				ld		a, (ev_doors)
+				or		a
+				jp		z, ae_4
+				ld		b, a
+				ld		hl, ev_doors + 1
+ae_3:			push	bc
+				ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
+				inc		hl
+				push	hl
+				ex		de, hl
+				call	draw_list_item
+				pop		hl
+				pop		bc
+				dec		b
+				jp		nz, ae_3
+ae_4:			ld		a, (ev_foods)
+				or		a
+				jp		z, ae_6
+				ld		b, a
+				ld		hl, ev_foods + 1
+ae_5:			push	bc
+				ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
+				inc		hl
+				push	hl
+				ex		de, hl
+				call	erase_food_item
+				pop		hl
+				pop		bc
+				dec		b
+				jp		nz, ae_5
+ae_6:			ld		hl, (ev_tomb)
+				ld		a, h
+				or		l
+				call	nz, draw_food_item
+ev_reset:		xor		a
+				ld		(ev_room), a
+				ld		(ev_clear), a
+				ld		(ev_doors), a
+				ld		(ev_foods), a
+				ld		hl, 0
+				ld		(ev_tomb), hl
+				ret
 
 ; герой — пока рыцарь (save_selection CPC)
 hero_setup:		xor		a
@@ -162,28 +253,99 @@ hero_setup:		xor		a
 				ret
 hero:			DB		0
 
-; ---- темп: шаг начинается с кадрового прерывания (обработчик 0x38 — ret; таймер ВИ53 в Emu80 так не читался)
+; ---- темп: кадровое прерывание (ISR по 0x38) считает кадры и перезаряжает счётчик 0 ВИ53 (режим 0, FFFF):
+;      по нему видно, сколько осталось до конца кадра (di_guard). Прерывание под DI теряется (MiSTer, Emu80).
+FRAME_HI		equ		29952 / 256				; кадр в старших байтах счётчика (117)
+isr:			push	af
+				ld		a, 0x30					; счётчик 0: режим 0, младший+старший
+				out		(0x08), a
+				ld		a, 0xff
+				out		(0x0B), a
+				out		(0x0B), a
+				ld		a, (frames)
+				inc		a
+				ld		(frames), a
+				call	kbd_scan				; клавиатура — в гашении
+				pop		af
+				ei
+				ret
+; -> A = кадров с прошлого вызова (>= 1); ждёт с разрешёнными прерываниями
 wait_frame:		ei
+wf_l:			ld		a, (frames)
+				ld		hl, wf_last
+				sub		(hl)
+				jp		nz, wf_got
+				halt
+				jp		wf_l
+wf_got:			push	af
+				ld		a, (frames)
+				ld		(hl), a
+				pop		af
+				ret
+; перед выводом под DI: A = стоимость в старших байтах счётчика (256 отсчётов = 512 тактов);
+; не хватает до конца кадра — дождаться прерывания. Возврат с DI.
+di_guard:		ld		(dg_cost), a
+				di
+				xor		a
+				out		(0x08), a				; защёлка счётчика 0
+				in		a, (0x0B)
+				in		a, (0x0B)				; старший байт: FF -> 0 за ~1,1 кадра
+				cpl								; прошло (в старших)
+				cp		FRAME_HI
+				jp		nc, dg_lost				; кадр кончился, а прерывания не было — потеряно
+				ld		b, a
+				ld		a, FRAME_HI
+				sub		b						; осталось
+				ld		hl, dg_cost
+				cp		(hl)
+				ret		nc
+				ei								; не успеем — подождать прерывание
 				halt
 				di
 				ret
+dg_lost:		ld		a, 0x30					; потерянное прерывание: перезарядить и засчитать кадр
+				out		(0x08), a
+				ld		a, 0xff
+				out		(0x0B), a
+				out		(0x0B), a
+				ld		hl, frames
+				inc		(hl)
+				ld		hl, (lost_frames)
+				inc		hl
+				ld		(lost_frames), hl
+				ret
+dg_cost:		DB		0
+frames:			DB		0
+wf_last:		DB		0
+lost_frames:	DW		0
 
 ; ---- клавиатура Вектора -> keys_pressed / fire_direction / keys_fire2 (read_keys CPC) ----
 ; ряд 0: б4 влево, б5 вверх, б6 вправо, б7 вниз; ряд 7: б7 пробел (огонь 1), б2 Z (огонь 2)
-read_input:		ld		a, 0x8a					; порт B — вход
+kbd_scan:		ld		a, 0x8a					; порт B — вход
 				out		(0x00), a
 				ld		a, 0xfe
 				out		(0x03), a
 				in		a, (0x02)
 				cpl
-				ld		c, a
+				ld		(kb_row0), a
 				ld		a, 0x7f
 				out		(0x03), a
 				in		a, (0x02)
 				cpl
-				ld		d, a
+				ld		(kb_row7), a
+				ld		a, 0x88					; порт B — выход (бордюр 0), прокрутка FF
+				out		(0x00), a
+				xor		a
+				out		(0x02), a
 				ld		a, 0xff
-				out		(0x03), a				; порт 3 — ещё и прокрутка
+				out		(0x03), a
+				ret
+kb_row0:		DB		0
+kb_row7:		DB		0
+read_input:		ld		a, (kb_row0)
+				ld		c, a
+				ld		a, (kb_row7)
+				ld		d, a
 				ld		b, 0
 				ld		a, c
 				and		0x10
@@ -307,7 +469,7 @@ sp_f:			push	bc
 				dec		b
 				jp		nz, sp_f
 				ret
-sp_once:		ei								; дождаться прерывания кадра
+sp_once:		ei								; дождаться прерывания кадра (ISR — по 0x38)
 				halt
 				di
 				ld		a, 0x88					; порт B — выход (номер цвета палитры)
@@ -326,8 +488,6 @@ sp_l:			ld		a, c
 				jp		p, sp_l
 				xor		a
 				out		(0x02), a
-				ld		a, 0x8a
-				out		(0x00), a
 				ld		a, 0xff
 				out		(0x03), a
 				ret
