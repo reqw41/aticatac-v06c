@@ -18,7 +18,7 @@ open('build/game/patch.inc', 'w').write('\n'.join(out) + '\n')
 PY
 python3 -I tools/layout.py
 (cd src/vec && ../../tools/sjasmplus --nologo --i8080 $SJFLAGS game.asm --sym=../../build/game/aticatac.sym > ../../build/game/sjasm.log 2>&1) || true
-if ! grep -q "Errors: 0" build/game/sjasm.log; then grep -iE "error|warning" build/game/sjasm.log | head -20; echo "СБОРКА НЕ УДАЛАСЬ"; exit 1; fi
+if grep -qE "Errors: [1-9]|error:" build/game/sjasm.log || ! grep -q "Errors: 0" build/game/sjasm.log; then grep -iE "error|warning" build/game/sjasm.log | head -20; echo "СБОРКА НЕ УДАЛАСЬ"; exit 1; fi
 python3 - <<'PY'
 # квазидиск: стр. 1 — предметы комнат, стр. 2 — контуры + ключи/еда (0xA300), стр. 3 — спрайты
 edd = bytearray(0x40000)

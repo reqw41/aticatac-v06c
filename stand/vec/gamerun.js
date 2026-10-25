@@ -57,12 +57,12 @@ const STK = ['blit_x', 'draw_item', 'clear_room', 'ol_pass', 'clear_screen'];
 const inStackCode = (pc) => { const n = nmOf(pc).split('+')[0]; return STK.includes(n) || /^(bx_|dt_|cr_|ol_|clr_)/.test(n); };
 const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
-let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
+let pcPrev = 0; const wPrev = {}; let lastDg = 0, lastDgT = 0; const lostAt = {}, deferN = {}, lpc = {}; let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
 const fnAt = {}, fnOpen = {}, fnSum = {}, fnHist = {}, loopH = [], loopH2 = []; let loopT0 = 0, loopRoom = false;
 for (const n of ['wait_frame', 'logic_step', 'collect_events', 'apply_events', 'render_sprites', 'panel_update']) if (S[n] !== undefined) fnAt[S[n]] = n;
 while (frames < N) {
   if (frc >= 59904) {
-    frc -= 59904; frames++; irqUntil = 64;          // как на железе и в Emu80: под DI прерывание теряется
+    frc -= 59904; frames++; irqUntil = +(process.env.IRQW || 64);          // как на железе и в Emu80: под DI прерывание теряется
     for (const [f, ks] of plan) if (f === frames) { keyboard.matrix.fill(0); for (const k of ks) { const [r, b] = KEYS[k]; keyboard.matrix[r] |= b; } }
     if (frames % (+process.env.SHOTN || 50) === 0) {
       const buf = Buffer.alloc(0x8000 + 16);
@@ -83,12 +83,12 @@ while (frames < N) {
   if (S.echk_stop !== undefined && cpu.pc === S.echk_stop && !echkDone) {
     echkDone = true; let bad = 0, first = -1;
     for (let a = 0; a < 0x6000; a++) if (((a >> 8) & 31) < 24 && rd(0x8000 + a) !== bgSnap[a]) { bad++; if (first < 0) first = a; }
-    console.log(`ECHK: смен комнаты ${rooms}, отличий от фона (поле, без панели) ${bad}` + (bad ? ` (первое: плоскость ${first >> 13} столбец ${(first >> 8) & 31} строка ${first & 255})` : ''));
+    console.log(`ECHK (кадр ${frames}): смен комнаты ${rooms}, отличий от фона (поле, без панели) ${bad}` + (bad ? ` (первое: плоскость ${first >> 13} столбец ${(first >> 8) & 31} строка ${first & 255})` : ''));
   }
   if (process.env.RTRACE) {
     if (cpu.pc === S.render_sprites) rtCur = { t0: total, f: frames, b: beamRow(), u: [], lg: 0 };
     if (rtCur && cpu.pc === S.logic_step) rtCur.lg++;
-    if (rtCur && cpu.pc === S.panel_update) { rtCur.d = total - rtCur.t0; if (rtCur.d > 59904 - 9000 && rtList.length < 40) rtList.push(rtCur); rtAll.push(rtCur); rtCur = null; }
+    if (rtCur && cpu.pc === S.panel_update) { rtCur.d = total - rtCur.t0; if ((rtCur.d > 59904 - 9000 && (rtList.length < 40 || rtCur.d > 100000)) || (process.env.RTALL && rtCur.f >= +process.env.RTALL.split('-')[0] && rtCur.f <= +process.env.RTALL.split('-')[1])) rtList.push(rtCur); rtAll.push(rtCur); rtCur = null; }
     if (upd && cpu.pc === S.zero_leftover) upd.kind = 'R'; else if (upd && cpu.pc === S.ou_xor) upd.kind = 'X'; else if (upd && cpu.pc === S.ou_newonly && !upd.kind) upd.kind = 'N';
   }
   if (process.env.ONE && upd && oneN < 3) { const n = nmOf(cpu.pc).split('+')[0]; oneP[n] = (oneP[n] || 0) + 1; }
@@ -100,16 +100,21 @@ while (frames < N) {
     if (upd.r1 >= 0) { updN++; let hit = false; for (const r of upd.rows) if (r >= upd.r0 && r <= upd.r1) { hit = true; break; } if (hit) updTear++; }
     upd = null;
   }
+  if (process.env.WATCH) { for (const o of [3, 5]) { const v = rd(S.objs + o * 32); if (v !== wPrev[o]) { if (frames > 280 && frames < 300) console.log('объект', o, 'нарисован', wPrev[o], '->', v, 'кадр', frames, 'pc', nmOf(pcPrev), 'sp', cpu.sp.toString(16)); wPrev[o] = v; } } pcPrev = cpu.pc; }
   if (cpu.pc === S.render_sprites) nRend++;
+  if (cpu.pc === S.di_guard) { lastDg = frc; lastDgT = total; }
+  if (process.env.LONGPC && frames >= +process.env.LONGPC && frames < +process.env.LONGPC + 4) { const n = nmOf(cpu.pc).split('+')[0]; lpc[n] = (lpc[n] || 0) + 1; }
+  if (S.rs_defer !== undefined && cpu.pc === S.rs_defer) { const o = (cpu.hl() - S.objs) >> 5; deferN[o] = (deferN[o] || 0) + 1; }
   if (process.env.LOOPST) {
     if (fnAt[cpu.pc] && !fnOpen[cpu.pc]) fnOpen[cpu.pc] = { t: total, ret: memory.bytes[memory.tobank(cpu.sp)] | memory.bytes[memory.tobank((cpu.sp + 1) & 0xffff)] << 8, sp: (cpu.sp + 2) & 0xffff };
-    for (const k in fnOpen) { const o = fnOpen[k]; if (o && cpu.pc === o.ret && cpu.sp === o.sp) { const d = total - o.t; const n = fnAt[k]; fnSum[n] = (fnSum[n] || 0) + d; (fnHist[n] = fnHist[n] || []).push(d); fnOpen[k] = null; if (n === 'wait_frame') { if (loopT0) { loopH.push(o.t - loopT0); if (!loopRoom) loopH2.push(o.t - loopT0); } loopT0 = total; loopRoom = false; } if (n === 'apply_events' && d > 20000) loopRoom = true; } }
+    for (const k in fnOpen) { const o = fnOpen[k]; if (o && cpu.pc === o.ret && cpu.sp === o.sp) { const d = total - o.t; const n = fnAt[k]; fnSum[n] = (fnSum[n] || 0) + d; (fnHist[n] = fnHist[n] || []).push(d); fnOpen[k] = null; if (n === 'wait_frame') { if (loopT0) { loopH.push(o.t - loopT0); if (!loopRoom) loopH2.push(o.t - loopT0); } loopT0 = total; loopRoom = false; } if (n === 'apply_events' && d > 20000) { loopRoom = true; if (process.env.LONGEV) console.log('долгий apply_events: кадр', frames, 'тактов', d, 'ev_room', rd(S.ev_room), 'ev_clear', rd(S.ev_clear)); }
+      if (process.env.LONGEV && d > 3 * 59904 && n !== 'apply_events') console.log('долгий', n, 'кадр', frames, 'тактов', d); } }
   }
   if (cpu.pc === S.zero_leftover) nRep++; else if (cpu.pc === S.ou_xor) nXor++; else if (cpu.pc === S.ou_newonly) nNew++;
   if (cpu.pc === S.logic_step) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
   if (irqUntil >= 0) {
     if (cpu.iff) { v06c.irq = true; v06c.checkInterrupt(); irqUntil = -1; irqOk++; }
-    else if (frc >= irqUntil) { irqUntil = -1; irqLost++; }
+    else if (frc >= irqUntil) { irqUntil = -1; irqLost++; const n = nmOf(cpu.pc).split('+')[0]; lostAt[n] = (lostAt[n] || 0) + 1; if (process.env.LOSTDBG && /^bx_|^bo_|^zf_/.test(n)) console.log('потеря в', n, 'кадр', frames, 'di_guard был при такте кадра', lastDg, 'стоимость', rd(S.dg_cost), 'прошло с него', total - lastDgT); }
   }
   const pc0 = cpu.pc;
   const c = (cpu.instruction(), cpu.vcycles); frc += c; total += c; tacc += c;
@@ -132,7 +137,10 @@ if (process.env.RTRACE) {
 }
 tickT.sort((a, b) => a - b);
 console.log(`обновлений: замещение на месте ${nRep}, XOR ${nXor}, появление ${nNew}; луч прошёл по строкам объекта во время обновления: ${updTear} из ${updN} (${(updTear / updN * 100).toFixed(1)}%)`);
+console.log('потеряны в', JSON.stringify(lostAt));
 console.log(`прерываний: дошло ${irqOk}, потеряно ${irqLost}; игра заметила потерянных ${rd(S.lost_frames) | rd(S.lost_frames + 1) << 8}`);
+if (process.env.LONGPC) console.log('метки', JSON.stringify(Object.entries(lpc).sort((a, b) => b[1] - a[1]).slice(0, 25)));
+console.log('отложено бюджетом по объектам', JSON.stringify(deferN));
 console.log(`выводов картинки ${nRend} (${(nRend / frames * 50).toFixed(1)} в с)`);
 console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);
 console.log('pc', cpu.pc.toString(16), 'objs', [...Array(72).keys()].map((i) => rd(S.objs + i).toString(16)).join(' '));

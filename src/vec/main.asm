@@ -322,12 +322,13 @@ di_guard:		ld		(dg_cost), a
 				cp		FRAME_HI
 				jp		nc, dg_lost				; кадр кончился, а прерывания не было — потеряно
 				ld		b, a
-				ld		a, FRAME_HI
+				ld		a, FRAME_HI - 2			; запас: округление вниз и перезарядка в обработчике позже прерывания
 				sub		b						; осталось
+				jp		c, dg_wait
 				ld		hl, dg_cost
 				cp		(hl)
 				ret		nc
-				ei								; не успеем — подождать прерывание
+dg_wait:		ei								; не успеем — подождать прерывание
 				halt
 				di
 				ret

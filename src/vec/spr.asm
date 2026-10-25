@@ -73,7 +73,20 @@ bl_go:			ld		(bx_mode), a
 				push	hl
 				push	de
 				push	bc
+				ld		de, 15					; стоимость этого изображения (запись + 15 + фаза, по 64 такта)
+				add		hl, de
+				ld		e, c
+				ld		d, 0
+				add		hl, de
+				ld		a, (hl)
+				rrca
+				rrca
+				rrca
+				and		0x1f
+				add		a, 3					; + запас (в замещении — нули)
+	IFDEF OLDBC
 				ld		a, BLIT_COST
+	ENDIF
 				call	di_guard
 				pop		bc
 				pop		de
@@ -426,8 +439,8 @@ rw_nb:			ld		a, (hl)
 				pop		bc
 				dec		b
 				jp		nz, rw_l
-				ld		a, 0
-				ld		(rs_spin), a
+				ld		a, (frames)				; кадр начала вывода
+				ld		(rs_frm), a
 ; выбор следующего: из ждущих — обгоняющий луч (луч + стоимость < верха окна) с самым ранним сроком начала,
 ; иначе уже пройденный лучом; никого — шаг логики или ждать луч
 rs_pass:		call	beam_hi
@@ -449,6 +462,7 @@ rq_l:			ld		a, (hl)
 				ld		e, (hl)					; верх
 				inc		hl
 				ld		a, (hl)					; низ
+				ld		(rs_bot), a
 				cp		b
 				jp		c, rq_pass				; луч уже прошёл
 				inc		hl
@@ -458,8 +472,13 @@ rq_l:			ld		a, (hl)
 				jp		c, rq_pop
 				cp		e
 				jp		nc, rq_pop				; не обгонит
+	IFDEF RS_LOW
+				ld		a, (rs_bot)				; ниже на экране — раньше (его ждать дольше)
+				cpl
+	ELSE
 				ld		a, e
 				sub		d
+	ENDIF
 				ld		e, a					; срок начала: верх - стоимость (меньше — срочнее)
 				ld		a, (rs_fl)
 				cp		2
@@ -498,7 +517,7 @@ rq_next:		ld		de, RSW
 				ld		a, (rs_bt)
 				cp		0xff
 				jp		z, rs_none
-				ld		hl, (rs_best)			; объект = objs + (окно - rs_win) * OBSZ / RSW
+rq_sel:			ld		hl, (rs_best)			; объект = objs + (окно - rs_win) * OBSZ / RSW
 				ld		de, 0 - rs_win
 				add		hl, de
 				add		hl, hl
@@ -517,7 +536,7 @@ rq_next:		ld		de, RSW
 				ld		(de), a					; окно обработано
 				ld		bc, OB_LATE
 				jp		c, rs_go
-				push	hl						; не укладывается в кадр — в следующем кадре
+rs_defer:		push	hl						; не укладывается в кадр — в следующем кадре
 				add		hl, bc
 				ld		(hl), 1
 				pop		hl
@@ -537,11 +556,42 @@ rs_none:		ld		a, (rs_left)
 				ret		z
 				call	logic_pend				; ждём луч — пока шаг логики (состояние объектов уже снято)
 				jp		nz, rs_pass
-				ld		a, (rs_spin)			; ждём луч; слишком долго (кадр сменился) — выводим как есть
-				inc		a
-				ld		(rs_spin), a
-				cp		200
-				jp		c, rs_pass
+	IFNDEF NOFORCE
+				ld		hl, rs_win				; герой или оружие: ожидание луча переполнит кадр —
+				call	rs_force				; рисовать сейчас (шов в одном кадре лучше потерянного кадра)
+				jp		c, rq_sel
+				ld		hl, rs_win + RSW
+				call	rs_force
+				jp		c, rq_sel
+	ENDIF
+	IFNDEF NORN
+				ld		hl, rs_win + 2 * RSW	; остальные: ожидание луча переполнит кадр — в следующий кадр
+				ld		b, NOBJ - 2
+rn_l:			push	bc
+				push	hl
+				call	rs_force
+				pop		hl
+				jp		nc, rn_n
+				ld		(hl), 0
+				push	hl
+				ld		de, 0 - rs_win			; объект = objs + (окно - rs_win) * 4
+				add		hl, de
+				add		hl, hl
+				add		hl, hl
+				ld		de, objs + OB_LATE
+				add		hl, de
+				ld		(hl), 1
+				pop		hl
+rn_n:			ld		de, RSW
+				add		hl, de
+				pop		bc
+				dec		b
+				jp		nz, rn_l
+	ENDIF
+				ld		a, (frames)				; ждём луч; кадр уже сменился — выводим как есть
+				ld		hl, rs_frm
+				cp		(hl)
+				jp		z, rs_pass
 				ld		hl, rs_win
 				ld		b, NOBJ
 rs_f:			ld		a, (hl)
@@ -567,6 +617,7 @@ rs_f:			ld		a, (hl)
 				push	hl
 				push	bc
 				ld		(ou_win), hl
+				ld		hl, (ou_obj)			; obj_update: HL = объект
 				call	obj_update
 				pop		bc
 				pop		hl
@@ -582,6 +633,7 @@ rs_left:		DB		0
 rs_beam:		DB		0
 rs_bt:			DB		0
 rs_fl:			DB		0
+rs_bot:			DB		0
 rs_best:		DW		0
 				ASSERT	OBSZ == RSW * 4
 ; бюджет кадра: HL = объект, DE = окно -> C — обновлять сейчас: герой всегда, остальные — если укладываются
@@ -592,12 +644,20 @@ LOGIC_HI		equ		19						; шаг логики, 99 % — 9,4 тыс. тактов
 	IFNDEF PANEL_HI
 PANEL_HI		equ		10						; панель и возврат в цикл
 	ENDIF
-rs_budget:		ld		a, l
+rs_budget:		ld		a, l					; герой и оружие (HL < objs + 2 * OBSZ) — всегда
+				sub		low (objs + 2 * OBSZ)
+				ld		a, h
+				sbc		a, high (objs + 2 * OBSZ)
+	IFDEF OLDWP
+				ld		a, l
 				cp		low objs
 				jp		nz, rb_1
 				ld		a, h
 				cp		high objs
-				jp		z, rb_ok				; герой — всегда
+				jp		z, rb_ok
+	ELSE
+				jp		c, rb_ok
+	ENDIF
 rb_1:			inc		de
 				inc		de
 				inc		de
@@ -614,7 +674,14 @@ rb_1:			inc		de
 				add		a, b
 				jp		c, rb_no
 				ld		b, a
-rb_h:			ld		a, (ml_pend)
+rb_h:			ld		a, (rs_win + RSW)		; оружие — тоже
+				or		a
+				jp		z, rb_w
+				ld		a, (rs_win + RSW + 3)
+				add		a, b
+				jp		c, rb_no
+				ld		b, a
+rb_w:			ld		a, (ml_pend)
 				or		a
 				ld		a, b
 				jp		z, rb_2
@@ -628,7 +695,26 @@ rb_ok:			scf
 				ret
 rb_no:			or		a
 				ret
-rs_spin:		DB		0
+; HL = окно обязательного объекта -> C и rs_best = HL, если ждёт и низ окна + стоимость + панель >= кадра
+rs_force:		ld		a, (hl)
+				or		a
+				ret		z
+				ld		(rs_best), hl
+				inc		hl
+				inc		hl
+				ld		a, (hl)					; низ
+				inc		hl
+				add		a, (hl)					; + стоимость
+				ret		c						; перенос — точно не успеть
+				add		a, PANEL_HI + FORCE_M
+				ret		c
+				cp		FRAME_HI
+				ccf
+				ret
+	IFNDEF FORCE_M
+FORCE_M			equ		0						; запас: ждать луч только если после него кадр не переполнится с запасом
+	ENDIF
+rs_frm:			DB		0
 ou_obj:			DW		0
 				ASSERT	OBSZ == 32
 
@@ -774,13 +860,24 @@ ow_obj:			DW		0
 ow_y0:			DB		0
 ow_y1:			DB		0
 ; положение луча: старший байт прошедших отсчётов счётчика 0 с прерывания кадра
+; прошло FRAME_HI и больше — прерывание потеряно: перезарядить счётчик, засчитать кадр (как di_guard)
 beam_hi:		di
 				xor		a
 				out		(0x08), a
 				in		a, (0x0B)
 				in		a, (0x0B)
-				ei
 				cpl
+	IFNDEF OLDBH
+				cp		FRAME_HI + 2			; с запасом: прерывание в этот момент ещё может прийти
+				jp		nc, bh_lost
+	ENDIF
+				ei
+				ret
+bh_lost:		push	hl
+				call	dg_lost
+				pop		hl
+				xor		a
+				ei
 				ret
 
 ; HL = объект
