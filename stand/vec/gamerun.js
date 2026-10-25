@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+// Стенд игры: build/game/aticatac.rom с 0x0000 + квазидиск build/game/aticatac.edd на ядре vector06js.
+//   node stand/vec/gamerun.js <кадров> <каталог снимков> [сценарий клавиш]
+// Сценарий: "0:right,120:up+space,300:" — с кадра N держать клавиши (left right up down space z).
+// Снимки (для stand/vec/shot.py) — каждые 50 кадров: <каталог>/fNNNN.raw; в stdout — шаги и такты.
+"use strict";
+const fs = require("fs"), vm = require("vm");
+const base = process.env.V06JS || require("path").join(require("os").homedir(), "projects/vector06js");
+const [NF, OUTDIR, SCRIPT] = process.argv.slice(2);
+const ROOTD = require('path').join(__dirname, '../..');
+const ROM = ROOTD + '/build/game/aticatac.rom', SYM = ROOTD + '/build/game/aticatac.sym';
+const S = {};
+for (const l of fs.readFileSync(SYM, "latin1").split("\n")) {
+  const m = l.match(/^(\w+):\s+EQU\s+0x([0-9A-F]+)/i); if (m) S[m[1]] = parseInt(m[2], 16);
+}
+const g = {}; g.window = g;
+g.document = { createElement: () => fc(), getElementById: () => fc() };
+function fcx() { return { createImageData: () => ({ data: new Uint8ClampedArray(4) }), putImageData() {}, getImageData: () => ({ data: new Uint8ClampedArray(4) }), fillRect() {}, drawImage() {} }; }
+function fc() { return { width: 0, height: 0, style: {}, getContext: () => fcx() }; }
+g.requestAnimationFrame = () => 0; g.setTimeout = () => 0; g.print = () => 0;
+g.console = { log() {}, debug() {}, warn() {}, error() {}, info() {} };
+const ctx = vm.createContext(g);
+for (const f of ["i8080-js/i8080_trace.js", "i8080-js/i8080_disasm.js", "i8080-js/i8080.js", "src/fili.js", "src/ay.js", "src/fd1793.js", "src/fddimage.js", "src/i8253.js", "src/io.js", "src/keyboard.js", "src/memory.js", "src/sound.js", "src/tv.js"])
+  vm.runInContext(fs.readFileSync(base + "/" + f, "utf8"), ctx, { filename: f });
+const memory = new ctx.Memory(), keyboard = new ctx.Keyboard(), timer = new ctx.I8253(), ay = new ctx.AY(),
+  floppy = new (ctx.Floppy().FD1793)(), io = new ctx.IO(keyboard, timer, memory, ay, floppy);
+const cpu = new ctx.I8080(memory, io), tape = { advance: () => {}, sample: 0, reset: () => {} },
+  v06c = new ctx.Vector06c(cpu, memory, io, ay, tape);
+v06c.bmp = new Uint32Array(576 * 288); v06c.displayFrame = () => {}; v06c.check_breakpoint = () => false; v06c.dbg = null;
+memory.init_from_array(new Uint8Array(fs.readFileSync(ROM)).subarray(0, 0x10000), 0);
+memory.detach_boot && memory.detach_boot();
+cpu.pc = 0; cpu.sp = 0; cpu.iff = false;
+const rd = a => memory.bytes[memory.tobank(a & 0xffff)];
+const rw = a => rd(a) | rd(a + 1) << 8;
+
+const edd = fs.readFileSync(ROOTD + '/build/game/aticatac.edd');
+for (let p = 0; p < 4; p++) for (let a = 0; a < 0x10000; a++) memory.bytes[memory.tobank(((p + 1) << 16) + a)] = edd[p * 0x10000 + a];
+const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] };
+const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
+fs.mkdirSync(OUTDIR, { recursive: true });
+let frc = 0, frames = 0, tacc = 0, total = 0;
+const N = +NF;
+let lastTicks = 0, lastT = 0;
+const tk = S.main_loop;
+let loops = 0, tickT = []; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
+const exS = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0]));
+const labsS = Object.entries(S).filter(([k]) => !exS.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]);
+const nmOf = (p) => { let r='?'; for (const [k,v] of labsS) { if (v<=p) r=k+'+'+(p-v); else break; } return r; };
+const STK = ['blit_x', 'draw_item', 'clear_room', 'ol_pass', 'clear_screen'];
+const inStackCode = (pc) => { const n = nmOf(pc).split('+')[0]; return STK.includes(n) || /^(bx_|dt_|cr_|ol_|clr_)/.test(n); };
+const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
+for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
+while (frames < N) {
+  if (frc >= 59904) {
+    frc -= 59904; frames++;
+    for (const [f, ks] of plan) if (f === frames) { keyboard.matrix.fill(0); for (const k of ks) { const [r, b] = KEYS[k]; keyboard.matrix[r] |= b; } }
+    if (frames % 50 === 0) {
+      const buf = Buffer.alloc(0x8000 + 16);
+      for (let a = 0; a < 0x8000; a++) buf[a] = rd(0x8000 + a);
+      for (let i = 0; i < 16; i++) buf[0x8000 + i] = rd(S.pal_data + i);
+      fs.writeFileSync(OUTDIR + '/f' + String(frames).padStart(4, '0') + '.raw', buf);
+    }
+  }
+  if (process.env.PATH1 && seqN < 400) { const n = nmOf(cpu.pc).split('+')[0]; if (n !== seqLast) { seq.push(n + '@' + cpu.sp.toString(16)); seqLast = n; seqN++; if (seqN === 400) { console.log(seq.join(' ')); process.exit(0); } } }
+  if (process.env.SPTRACE) {
+    const sp = cpu.sp;
+    if (cpu.pc === S.new_game) spOn = true;
+    if (spOn && !spBad && (sp < 0x3c00 || sp > 0x4000) && !inStackCode(cpu.pc)) { spBad = true; console.log('SP ' + sp.toString(16) + ' при pc ' + cpu.pc.toString(16) + ' ' + nmOf(cpu.pc) + '; до этого: ' + spHist.map((q) => q.toString(16) + ' ' + nmOf(q)).join(' | ')); process.exit(1); }
+    spHist.push(cpu.pc); if (spHist.length > 12) spHist.shift();
+  }
+  if (process.env.TRACE) { hist.push(cpu.pc + 0x10000 * cpu.sp); if (hist.length > 60) hist.shift(); if (!okpc[cpu.pc]) { const ex = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0])); const labs = Object.entries(S).filter(([k]) => !ex.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]); const nm = (p) => { let r='?'; for (const [k,v] of labs) { if (v<=p) r=k+'+'+(p-v); else break; } return r; }; console.log(hist.map((q)=>{const p=q&0xffff, sp=Math.floor(q/0x10000); return p.toString(16)+' sp '+sp.toString(16)+' '+nm(p);}).join('\n')); process.exit(1); } }
+  if (cpu.pc === tk) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
+  const pc0 = cpu.pc;
+  const c = (cpu.instruction(), cpu.vcycles); frc += c; total += c; tacc += c;
+  if (process.env.PROF) { let n = profCache.get(pc0); if (!n) { n = nmOf(pc0).split('+')[0]; profCache.set(pc0, n); } prof[n] = (prof[n] || 0) + c; }
+  if (tacc > 1) { const tn = tacc >> 1; tacc -= tn * 2; timer.Count(tn); }
+  if (cpu.last_opcode === 0xd3) io.commit();
+}
+if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
+tickT.sort((a, b) => a - b);
+console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);
+console.log('pc', cpu.pc.toString(16), 'objs', [...Array(72).keys()].map((i) => rd(S.objs + i).toString(16)).join(' '));
+console.log('player_growing', rd(0xF8C), 'sprite1 state', rd(0x29BC + 10), 'x', rd(0x29BC), 'y', rd(0x29BD));

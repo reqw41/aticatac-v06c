@@ -5,8 +5,7 @@
 				DEVICE	NOSLOT64K
 				INCLUDE	"../../build/l80/cpcsym.inc"
 
-FOOD80			equ		0x3800				; food_items (банк героев CPC 0x5FD8) -> сюда
-FOOD_DELTA		equ		FOOD80 - C_food_items
+				INCLUDE	"defs.asm"
 
 ; служебное сверки: очередь ld a,r и журнал звуков
 				ORG		0xDF00
