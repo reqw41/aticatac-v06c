@@ -1,0 +1,4 @@
+{ "name": "s3_explore",
+  "menu": [ { "frames": 150, "keys": [] }, { "frames": 10, "keys": ["SPACE"] }, { "frames": 5, "keys": [] } ],
+  "ticks": 15000,
+  "policy": { "name": "explore", "seed": 31, "fire": 0.12, "trap": 0.3, "drop": 0.002 } }

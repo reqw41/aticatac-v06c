@@ -1,0 +1,37 @@
+{
+ "name": "s6_left",
+ "menu": [
+  {
+   "frames": 150,
+   "keys": []
+  },
+  {
+   "frames": 10,
+   "keys": [
+    "LEFT"
+   ]
+  },
+  {
+   "frames": 30,
+   "keys": []
+  },
+  {
+   "frames": 10,
+   "keys": [
+    "SPACE"
+   ]
+  },
+  {
+   "frames": 5,
+   "keys": []
+  }
+ ],
+ "ticks": 12000,
+ "policy": {
+  "name": "explore",
+  "seed": 61,
+  "fire": 0.15,
+  "trap": 0.3,
+  "drop": 0.003
+ }
+}

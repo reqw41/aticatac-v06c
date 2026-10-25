@@ -1,0 +1,37 @@
+{
+ "name": "s7_right",
+ "menu": [
+  {
+   "frames": 150,
+   "keys": []
+  },
+  {
+   "frames": 10,
+   "keys": [
+    "RIGHT"
+   ]
+  },
+  {
+   "frames": 30,
+   "keys": []
+  },
+  {
+   "frames": 10,
+   "keys": [
+    "SPACE"
+   ]
+  },
+  {
+   "frames": 5,
+   "keys": []
+  }
+ ],
+ "ticks": 12000,
+ "policy": {
+  "name": "explore",
+  "seed": 71,
+  "fire": 0.15,
+  "trap": 0.3,
+  "drop": 0.003
+ }
+}

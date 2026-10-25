@@ -41,6 +41,7 @@ reg('draw_items', (M) => { items.draw_items(M); });
 reg('explode_item', (M, r) => { items.explode_item(M, r.ix, r.c); });
 reg('game_tasks', (M) => { game.game_tasks(M); });
 reg('falling_tasks', (M) => { game.falling_tasks(M); });
+reg('end_tasks', (M) => { require('./state').end_tasks(M); });
 reg('draw_room', (M) => { room.draw_room(M); });
 reg('calculate_collision_grid', (M) => { room.calculate_collision_grid(M); });
 reg('check_player_hit_baddie', (M) => { player.check_player_hit_baddie(M); });

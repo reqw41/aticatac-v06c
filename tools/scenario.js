@@ -14,12 +14,18 @@ for (const l of fs.readFileSync(path.join(ROOT, 'build/cpcsrc/rasmoutput.sym'), 
 function rng(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 
 // машина в начале первого шага игры (PC = current_game_state) и функция «клавиши шага t»
-function start(sc) {
+// opts.step(m) — свой шаг машины (теневая проверка смотрит и меню/старт игры); opts.onCreate(m)
+function start(sc, opts) {
+  opts = opts || {};
   const m = new CPC(path.join(ROOT, 'build/cpcnew'));
-  for (const st of sc.menu || []) { m.keysOnly(st.keys || []); m.runFrames(st.frames); }
+  if (opts.onCreate) opts.onCreate(m);
+  const step = opts.step || ((mm) => mm.step());
+  const frames = (n) => { const f = m.frames + n; while (m.frames < f) step(m); };
+  const until = (pc, lim) => { const end = m.total + lim; while (m.total < end) { if (m.pc === pc) return true; step(m); } return false; };
+  for (const st of sc.menu || []) { m.keysOnly(st.keys || []); frames(st.frames); }
   m.keysOnly([]);
-  if (!m.runUntilPc(SYM.game_tasks, CPC.T_FRAME * 3000)) throw new Error('игра не началась');
-  m.runUntilPc(SYM.current_game_state);
+  if (!until(SYM.game_tasks, CPC.T_FRAME * 3000)) throw new Error('игра не началась');
+  until(SYM.current_game_state, CPC.T_FRAME * 10);
   const plan = [];
   for (const st of sc.steps || []) for (let i = 0; i < st.ticks; i++) plan.push(st.keys || []);
   const rnd = sc.random ? rng(sc.random.seed) : null;
@@ -27,8 +33,17 @@ function start(sc) {
   let policy = null;
   if (sc.policy) policy = require(path.join(__dirname, 'policies', sc.policy.name + '.js'))(sc.policy, SYM);
   const N = sc.ticks || plan.length;
+  // pokes: [{ "tick": t, "set": { "room_number": 85, "room_changed": 1 } }] — запись в память перед шагом t
+  // (значение "@метка" — текущее значение переменной игры, например "@mummy_room")
+  const pokes = new Map();
+  for (const p of sc.pokes || []) pokes.set(p.tick, p.set);
   function keysFor(t) {
     if (t >= N) return null;
+    const pk = pokes.get(t);
+    if (pk) for (const [k, v] of Object.entries(pk)) {
+      const a = k in SYM ? SYM[k] : parseInt(k, 16);
+      m.poke(a, typeof v === 'string' && v[0] === '@' ? m.peek(SYM[v.slice(1)]) : v);   // "@метка" — значение переменной
+    }
     if (t < plan.length) return plan[t];
     if (policy) return policy(m, t);
     if (!rnd) return null;

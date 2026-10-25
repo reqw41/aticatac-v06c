@@ -9,7 +9,7 @@
 //   rd     — чтения игрой (не обработчиком) адресов прерывания, по порядку: [адрес, байт] — вход модели
 //            (клавиши, часы, счётчик шагов — их пишет обработчик посреди шага);
 //   r      — значения `ld a,r` (случайность);
-//   sfx    — номера звуков (E на входе play_sfx);
+//   sfx    — номера звуков (A на входе PLY_AKG_PlaySoundEffect: play_sfx и play_lowpriority_sfx);
 //   fr     — сколько кадров прошло за шаг.
 // Адреса прерывания = всё, что пишет обработчик (узнаётся предварительным прогоном того же сценария).
 // Плоский адрес: страница*0x4000 + смещение (страницы 4..7 — 0x10000 + (n-4)*0x4000, как в ram модели).
@@ -62,8 +62,9 @@ function run(sc, owned, learn) {
     m.step();                                   // сам call
     for (;;) {
       const pc = m.pc;
-      if (pc === CGS) break;
-      if (pc === SYM.play_sfx && !m.inIsr) cur.sfx.push(m.cpu.getState().e);
+      if (pc === CGS && !m.inIsr) break;
+      if (m.intPending && m.cpu.get_iff1()) { m.step(); continue; }   // подача прерывания, команда — потом
+      if (pc === SYM.ply_akg_playsoundeffect && !m.inIsr) cur.sfx.push(m.cpu.get_a());
       const isLdAR = !m.inIsr && m.peek(pc) === 0xed && m.peek(pc + 1) === 0x5f;
       m.step();
       if (isLdAR) cur.r.push(m.cpu.get_a());

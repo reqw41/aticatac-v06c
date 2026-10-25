@@ -39,14 +39,17 @@ const owned = new Set([...learn].filter((a) => !(a >= STACK_LO && a < STACK_HI))
 const PAGE6 = m0page(6);
 const skipCmp = (f) => model.drawOnly.has(f) || owned.has(f) || (f >= STACK_LO && f < STACK_HI) || (f >= 0x8000 && f < 0x10000) || (f >= PAGE6 && f < PAGE6 + 0x4000);
 
-const { m, keysFor } = scenario.start(sc);
 const active = [];                       // стек проверок
-m.onWrite = (a, v, isr) => { if (!isr && active.length) { const f = m._map(a); for (const c of active) c.w.add(f); } };
-m.onRead = (a, v, isr) => {
-  if (isr || !active.length) return;
-  const f = m._map(a);
-  if (!owned.has(f)) return;
-  for (const c of active) { let q = c.q.get(f); if (!q) c.q.set(f, q = []); q.push(v); }
+let m = null;
+const onCreate = (mm) => {
+  m = mm;
+  m.onWrite = (a, v, isr) => { if (!isr && active.length) { const f = m._map(a); for (const c of active) c.w.add(f); } };
+  m.onRead = (a, v, isr) => {
+    if (isr || !active.length) return;
+    const f = m._map(a);
+    if (!owned.has(f)) return;
+    for (const c of active) { let q = c.q.get(f); if (!q) c.q.set(f, q = []); q.push(v); }
+  };
 };
 const stat = {};
 for (const n of names) stat[n] = { calls: 0, bad: 0, skip: 0 };
@@ -92,34 +95,39 @@ function finish(c) {
   }
 }
 
+// один шаг машины с проверками: вход в смоделированную подпрограмму, ld a,r, звуки, возвраты
+function shadowStep(mm) {
+  const pc = m.pc;
+  // на этом шаге подаётся прерывание — команда по pc не выполняется (выполнится после возврата)
+  if (m.intPending && m.cpu.get_iff1()) { m.step(); return; }
+  if (!m.inIsr) {
+    const n = entry.get(pc);
+    if (n) {
+      const s = m.cpu.getState();
+      const regs = { a: s.a, b: s.b, c: s.c, d: s.d, e: s.e, h: s.h, l: s.l, ix: s.ix, iy: s.iy,
+        fz: s.flags.Z, fc: s.flags.C };
+      active.push({ name: n, ram: m.ram.slice(), cfg: m.cfg, regs, sp: s.sp, ret: m.peek(s.sp) | m.peek(s.sp + 1) << 8,
+        w: new Set(), q: new Map(), r: [], sfx: [] });
+    }
+    if (pc === SYM.ply_akg_playsoundeffect && active.length) { const a = m.cpu.get_a(); for (const c of active) c.sfx.push(a); }
+  }
+  const isLdAR = !m.inIsr && active.length && m.peek(pc) === 0xed && m.peek(pc + 1) === 0x5f;
+  m.step();
+  if (isLdAR) { const a = m.cpu.get_a(); for (const c of active) c.r.push(a); }
+  while (active.length && !m.inIsr) {
+    const c = active[active.length - 1];
+    if (m.pc === c.ret && m.cpu.get_sp() === ((c.sp + 2) & 0xffff)) { active.pop(); finish(c); } else break;
+  }
+}
+
+const { keysFor } = scenario.start(sc, { onCreate, step: shadowStep });
 for (let t = 0; ; t++) {
   tick = t;
   const keys = keysFor(t);
   if (!keys) break;
   m.keysOnly(keys);
-  m.step();
-  for (;;) {
-    const pc = m.pc;
-    if (pc === SYM.current_game_state && !m.inIsr) break;
-    if (!m.inIsr) {
-      const n = entry.get(pc);
-      if (n) {
-        const s = m.cpu.getState();
-        const regs = { a: s.a, b: s.b, c: s.c, d: s.d, e: s.e, h: s.h, l: s.l, ix: s.ix, iy: s.iy,
-          fz: s.flags.Z, fc: s.flags.C };
-        active.push({ name: n, ram: m.ram.slice(), cfg: m.cfg, regs, sp: s.sp, ret: m.peek(s.sp) | m.peek(s.sp + 1) << 8,
-          w: new Set(), q: new Map(), r: [], sfx: [] });
-      }
-      if (pc === SYM.ply_akg_playsoundeffect && active.length) { const a = m.cpu.get_a(); for (const c of active) c.sfx.push(a); }
-    }
-    const isLdAR = !m.inIsr && active.length && m.peek(pc) === 0xed && m.peek(pc + 1) === 0x5f;
-    m.step();
-    if (isLdAR) { const a = m.cpu.get_a(); for (const c of active) c.r.push(a); }
-    while (active.length && !m.inIsr) {
-      const c = active[active.length - 1];
-      if (m.pc === c.ret && m.cpu.get_sp() === ((c.sp + 2) & 0xffff)) { active.pop(); finish(c); } else break;
-    }
-  }
+  shadowStep(m);
+  while (!(m.pc === SYM.current_game_state && !m.inIsr)) shadowStep(m);
 }
 let ok = true;
 for (const n of names) {

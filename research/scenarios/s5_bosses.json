@@ -1,0 +1,71 @@
+{
+ "name": "s5_bosses",
+ "menu": [
+  {
+   "frames": 150,
+   "keys": []
+  },
+  {
+   "frames": 10,
+   "keys": [
+    "SPACE"
+   ]
+  },
+  {
+   "frames": 5,
+   "keys": []
+  }
+ ],
+ "ticks": 16000,
+ "pokes": [
+  {
+   "tick": 800,
+   "set": {
+    "room_number": 85,
+    "room_changed": 1
+   }
+  },
+  {
+   "tick": 3300,
+   "set": {
+    "room_number": 86,
+    "room_changed": 1
+   }
+  },
+  {
+   "tick": 5800,
+   "set": {
+    "room_number": 67,
+    "room_changed": 1
+   }
+  },
+  {
+   "tick": 8300,
+   "set": {
+    "room_number": 109,
+    "room_changed": 1
+   }
+  },
+  {
+   "tick": 10800,
+   "set": {
+    "room_number": 85,
+    "room_changed": 1
+   }
+  },
+  {
+   "tick": 13300,
+   "set": {
+    "room_number": 86,
+    "room_changed": 1
+   }
+  }
+ ],
+ "policy": {
+  "name": "explore",
+  "seed": 55,
+  "fire": 0.15,
+  "trap": 0.2,
+  "drop": 0.002
+ }
+}
