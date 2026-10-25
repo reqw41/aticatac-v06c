@@ -5,12 +5,13 @@
 // falling_tasks / end_tasks). На каждом шаге пишется:
 //   task   — адрес задачи (какое состояние игры);
 //   d      — изменения состояния к концу шага: [плоский адрес, байт] по страницам 0 (код и переменные),
-//            1 (банк предметов) и 5 (банк комнат), без адресов прерывания и стека;
+//            1 (банк предметов), 4 (еда) и 5 (банк комнат), без адресов прерывания и стека;
 //   rd     — чтения игрой (не обработчиком) адресов прерывания, по порядку: [адрес, байт] — вход модели
 //            (клавиши, часы, счётчик шагов — их пишет обработчик посреди шага);
 //   r      — значения `ld a,r` (случайность);
 //   sfx    — номера звуков (A на входе PLY_AKG_PlaySoundEffect: play_sfx и play_lowpriority_sfx);
-//   fr     — сколько кадров прошло за шаг.
+//   fr     — сколько кадров прошло за шаг;
+//   pk     — записи сценария в память перед шагом (телепорт), если были.
 // Адреса прерывания = всё, что пишет обработчик (узнаётся предварительным прогоном того же сценария).
 // Плоский адрес: страница*0x4000 + смещение (страницы 4..7 — 0x10000 + (n-4)*0x4000, как в ram модели).
 //
@@ -28,18 +29,19 @@ const { SYM, ROOT } = scenario;
 const STACK_LO = 0x3e00, STACK_HI = 0x4000;    // стек игры (sp = 0x4000)
 
 function regions(m) {                           // плоские диапазоны сравниваемого состояния
-  return [[0x0000, 0x4000], [m.page(1), m.page(1) + 0x4000], [m.page(5), m.page(5) + 0x4000]];
+  // страница 4 — еда и могилы (food_items в банке героев)
+  return [[0x0000, 0x4000], [m.page(1), m.page(1) + 0x4000], [m.page(4), m.page(4) + 0x4000], [m.page(5), m.page(5) + 0x4000]];
 }
 
 // прогон сценария; learn = Set адресов, записанных обработчиком (заполняется), owned = Set для записи
 function run(sc, owned, learn) {
-  const { m, keysFor, N } = scenario.start(sc);
+  const { m, keysFor, N, applied } = scenario.start(sc);
   const flat = (a) => m._map(a);
   m.onWrite = (a, v, isr) => { if (isr && learn) learn.add(flat(a)); };
   let cur = null;
   // чтения, которые модели не нужны: ожидание кадра, экраны (вывод не моделируется), банки, служебное
   const skip = new Set();
-  for (const n of ['frame_ready', 'hidden_screen_base_address', 'visible_screen_base_address', 'memory_bank',
+  for (const n of ['frame_ready', 'visible_screen_base_address', 'memory_bank',
     'previous_memory_bank', 'interrupt_index', 'interrupt_call', 'pen_delay']) skip.add(SYM[n]);
   skip.add(SYM.scr_addr_table); skip.add(SYM.scr_addr_table + 1); skip.add(SYM.interrupt_call + 1);
   m.onRead = (a, v, isr) => {
@@ -55,9 +57,13 @@ function run(sc, owned, learn) {
   for (let t = 0; t < N; t++) {
     const keys = keysFor(t);
     if (!keys) break;
+    const pk = applied.slice();                   // телепорт сценария — до шага, в эталоне отдельно
+    for (const [a, v] of pk) for (let k = 0; k < regs.length; k++)
+      if (a >= regs[k][0] && a < regs[k][1]) prev[k][a - regs[k][0]] = v;
     m.keysOnly(keys);
     const task = m.peek(CGS + 1) | m.peek(CGS + 2) << 8;
     cur = { task, rd: [], r: [], sfx: [], keys };
+    if (pk.length) cur.pk = pk;
     const f0 = m.frames;
     m.step();                                   // сам call
     for (;;) {

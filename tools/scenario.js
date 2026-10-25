@@ -36,13 +36,17 @@ function start(sc, opts) {
   // pokes: [{ "tick": t, "set": { "room_number": 85, "room_changed": 1 } }] — запись в память перед шагом t
   // (значение "@метка" — текущее значение переменной игры, например "@mummy_room")
   const pokes = new Map();
+  const applied = [];                             // записи последнего keysFor: [плоский адрес, байт]
   for (const p of sc.pokes || []) pokes.set(p.tick, p.set);
   function keysFor(t) {
     if (t >= N) return null;
     const pk = pokes.get(t);
+    applied.length = 0;
     if (pk) for (const [k, v] of Object.entries(pk)) {
       const a = k in SYM ? SYM[k] : parseInt(k, 16);
-      m.poke(a, typeof v === 'string' && v[0] === '@' ? m.peek(SYM[v.slice(1)]) : v);   // "@метка" — значение переменной
+      const val = typeof v === 'string' && v[0] === '@' ? m.peek(SYM[v.slice(1)]) : v;   // "@метка" — значение переменной
+      m.poke(a, val);
+      applied.push([m._map(a), val & 0xff]);
     }
     if (t < plan.length) return plan[t];
     if (policy) return policy(m, t);
@@ -53,7 +57,7 @@ function start(sc, opts) {
     }
     hold--; return rkeys;
   }
-  return { m, keysFor, N };
+  return { m, keysFor, N, applied };
 }
 
 module.exports = { start, SYM, ROOT, rng };
