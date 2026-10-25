@@ -3,6 +3,7 @@
 // на каждой метке rv_done снимаются 3 плоскости 0x8000..0xDFFF и такты от предыдущей комнаты.
 //   node stand/vec/roomrun.js build/room/room.r0m build/room/room.sym <выход.bin>
 // Выход: на каждую комнату 1 байт номера + 0x6000 байт плоскостей; такты — в stdout.
+// Самостоятельный образ (-DDEMO): NOPRELOAD=1 DONE=dm_done MAXROOMS=<n> — квазидиск не заполняется.
 "use strict";
 const fs = require("fs"), vm = require("vm");
 const base = process.env.V06JS || require("path").join(require("os").homedir(), "projects/vector06js");
@@ -32,7 +33,8 @@ const rd = a => memory.bytes[memory.tobank(a & 0xffff)];
 const rw = a => rd(a) | rd(a + 1) << 8;
 
 const path = require("path");
-for (let p = 1; p <= 3; p++) {
+const DONE = S[process.env.DONE || "rv_done"], MAXROOMS = +process.env.MAXROOMS || 1e9;
+for (let p = 1; p <= 3 && !process.env.NOPRELOAD; p++) {
   const f = path.join(path.dirname(ROM), "items" + p + ".bin");
   if (!fs.existsSync(f)) continue;
   const d = fs.readFileSync(f);
@@ -42,12 +44,13 @@ let frc = 0, tacc = 0, total = 0, last = 0, n = 0;
 const chunks = [], per = [];
 for (;;) {
   if (frc >= 59904) { frc -= 59904; v06c.irq = true; v06c.checkInterrupt(); }
-  if (cpu.pc === S.rv_done) {
+  if (cpu.pc === DONE) {
     const room = rd(S.rv_room), buf = Buffer.alloc(1 + 0x6000);
     buf[0] = room;
     for (let a = 0; a < 0x6000; a++) buf[1 + a] = rd(0x8000 + a);
     chunks.push(buf); per.push([room, total - last]);
     n++;
+    if (n >= MAXROOMS) break;
   }
   if (cpu.pc === S.rv_loop) last = total;
   if (cpu.pc === S.rv_end || total > 59904 * 50 * 120) break;

@@ -17,3 +17,4 @@ stand/cpc/*.out
 stand/cpc/trace.txt
 .DS_Store
 stand/cpc/rooms/
+tools/zx0

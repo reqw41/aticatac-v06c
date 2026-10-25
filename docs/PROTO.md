@@ -150,3 +150,10 @@ draw_collectables: контур и предметы, плюс банк комн�
 - На стенде квазидиск заполняется прямо в памяти эмулятора; загрузчик для железа — потом.
 - Цвета пока общей 8-цветной палитрой: зелёный контур → голубой, сиреневый → бледно-голубой.
   Следующий шаг по цвету — палитра под комнату.
+- Самостоятельный образ (25.10): `python3 -I tools/mkroomdemo.py build/room` (после mkroom.py) и
+  `sjasmplus --i8080 -DDEMO proto/room.asm` → build/room/room_demo.r0m (64 КБ с 0x0000). Графика
+  квазидиска (105 КБ) и банк комнат сжаты ZX0 classic (`tools/zx0 -c`, бинарник из alien8-v06c, в
+  .gitignore; распаковщик proto/dzx0.asm) — 45.7 КБ; распаковка при старте ~8 с (чёрная палитра),
+  потом комнаты по кругу каждые 2 с. Проверено без заранее заполненного квазидиска:
+  `NOPRELOAD=1 DONE=dm_done MAXROOMS=143 node stand/vec/roomrun.js ...` + roomcmp; в Emu80 идёт
+  (`Emu80qt --platform vector --run build/room/room_demo.r0m`).

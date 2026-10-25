@@ -4,11 +4,18 @@
 ; (стр. 1, tools/mkroom.py; на стенде кладётся прямо в память эмулятора). 8 цветов, 3 плоскости.
 ; Прогон: все комнаты по очереди; после каждой — метка rv_done (стенд снимает экран и такты).
 ;   tools/sjasmplus --i8080 proto/room.asm   (данные — python3 tools/mkroom.py build/room)
+; -DDEMO — самостоятельный образ (build/room/room_demo.r0m, для Emu80/MiSTer): графика квазидиска и банк
+; комнат сжаты (tools/mkroomdemo.py), распаковываются при старте; комнаты сменяются по кругу каждые ~2 с.
 				DEVICE	NOSLOT64K
 				INCLUDE	"../build/room/room.inc"
 
 NROOMS			equ		143
+	IFDEF DEMO
+				INCLUDE	"../build/room/demo_const.inc"
+STACK			equ		DATA_LO
+	ELSE
 STACK			equ		0x4000
+	ENDIF
 
 				ORG		0x0000
 				di
@@ -18,7 +25,7 @@ STACK			equ		0x4000
 isr:			push	af
 				push	bc
 				push	hl
-				ld		hl, pal_data + 15
+				ld		hl, pal_cur + 15
 				ld		c, 15
 isr_pal:		ld		a, c
 				out		(0x02), a
@@ -41,6 +48,11 @@ isr_pal:		ld		a, c
 				ORG		0x0080
 rv_room:		DB		0					; номер рисуемой комнаты — читает стенд
 				INCLUDE	"../build/room/pal.inc"
+	IFDEF DEMO
+pal_cur:		DS		16, 0				; палитра, которую грузит ISR (при загрузке — чёрная)
+	ELSE
+pal_cur			equ		pal_data
+	ENDIF
 
 start:			ld		sp, STACK
 				ld		a, 0x88
@@ -49,10 +61,121 @@ start:			ld		sp, STACK
 				out		(0x02), a
 				ld		a, 0xFF
 				out		(0x03), a
+	IFDEF DEMO
 				ei
 				halt
-				halt
 				di
+				call	demo_load
+				ld		hl, pal_data
+				ld		de, pal_cur
+				ld		c, 16
+dl_pal:			ld		a, (hl)
+				ld		(de), a
+				inc		hl
+				inc		de
+				dec		c
+				jp		nz, dl_pal
+				xor		a
+dm_loop:		ld		(rv_room), a
+				call	draw_room
+dm_done:		ei							; стенд: комната готова (DONE=dm_done)
+				ld		c, 100
+dm_wait:		halt
+				dec		c
+				jp		nz, dm_wait
+				di
+				ld		a, (rv_room)
+				inc		a
+				cp		NROOMS
+				jp		nz, dm_loop
+				xor		a
+				jp		dm_loop
+
+; распаковка: куски ZX0 -> буфер 0x8000 -> квазидиск (PUSH сверху вниз), затем банк комнат на 0x4000,
+; затем очистка экрана
+demo_load:		ld		hl, kv_chunks
+dl_next:		ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
+				inc		hl
+				ld		a, d
+				or		e
+				jp		z, dl_rooms
+				ld		a, (hl)
+				ld		(dl_page + 1), a
+				inc		hl
+				ld		c, (hl)
+				inc		hl
+				ld		b, (hl)
+				inc		hl
+				push	bc					; конец куска в квазидиске
+				ld		c, (hl)
+				inc		hl
+				ld		b, (hl)
+				inc		hl
+				push	hl
+				push	bc					; длина
+				ld		bc, 0x8000
+				call	dzx0
+				pop		bc
+				pop		hl
+				ld		(dl_tab), hl
+				pop		hl
+				ld		(dl_sp + 1), hl
+				ld		hl, 0
+				add		hl, sp
+				ld		(dl_ssp), hl
+				ld		hl, 0x8000 - 1
+				add		hl, bc				; последний байт в буфере
+dl_page:		ld		a, 0
+				out		(0x10), a
+dl_sp:			ld		sp, 0
+dl_cp:			ld		d, (hl)
+				dec		hl
+				ld		e, (hl)
+				dec		hl
+				push	de
+				ld		a, h
+				cp		0x7F
+				jp		nz, dl_cp
+				xor		a
+				out		(0x10), a
+				ld		hl, (dl_ssp)
+				ld		sp, hl
+				ld		hl, (dl_tab)
+				jp		dl_next
+dl_rooms:		ld		de, ROOMS_Z
+				ld		bc, 0x4000
+				call	dzx0
+				ld		hl, 0
+				add		hl, sp
+				ld		(dl_ssp), hl
+				ld		hl, 0
+				ld		de, 0
+				ld		sp, hl				; 0x10000 вниз до 0x8000
+				ld		b, 0
+dl_clr:			push	de
+				push	de
+				push	de
+				push	de
+				push	de
+				push	de
+				push	de
+				push	de
+				dec		b
+				jp		nz, dl_clr
+				ld		hl, dl_k			; 256*16 = 4 КБ за круг: 8 кругов
+				dec		(hl)
+				jp		nz, dl_clr
+				ld		hl, (dl_ssp)
+				ld		sp, hl
+				ret
+dl_k:			DB		8
+dl_tab:			DW		0
+dl_ssp:			DW		0
+				INCLUDE	"../build/room/demo.inc"
+				INCLUDE	"dzx0.asm"
+	ENDIF
 				xor		a
 rv_loop:		ld		(rv_room), a
 				call	draw_room
@@ -422,7 +545,11 @@ dt_ssp:			DW		0
 				INCLUDE	"../build/room/items.inc"
 code_end:
 				ASSERT	code_end <= STACK - 0x100
-
+	IFDEF DEMO
+				INCLUDE	"../build/room/demo_blobs.inc"
+				SAVEBIN	"../build/room/room_demo.r0m", 0, 0x10000
+	ELSE
 				ORG		0x4000
 				INCBIN	"../build/room/rooms.bin"
 				SAVEBIN	"../build/room/room.r0m", 0, 0x8000
+	ENDIF
