@@ -14,7 +14,7 @@ function update_sprite(M, ix) {
   if (M.rd(ix + S.spr_boss)) return boss().update_boss(M, ix);
   const cnt = (M.rd(ix + S.spr_counter) - 1) & 0xff;
   M.wr(ix + S.spr_counter, cnt);
-  if (!cnt) return random_sprite_action(M, ix);
+  if (!cnt) return E.random_sprite_action(M, ix);
   if (!(M.rd(S.heartbeat) & 1)) return;
   bounce(M, ix + S.spr_x, ix + S.spr_xinc, S.min_x, S.max_x);
   bounce(M, ix + S.spr_y, ix + S.spr_yinc, S.min_y, S.max_y);
@@ -69,7 +69,7 @@ function is_arriving(M, ix) {
   M.wr(ix + S.spr_state, S.state_active);
   const a = random(M) & 0x0f;
   const iy = M.rd16(S.sprite_info + 2 * a);
-  random_sprite_action(M, ix);
+  E.random_sprite_action(M, ix);
   init_sprite(M, ix, iy);
 }
 
@@ -107,4 +107,4 @@ function reset_sprites(M) {
 // поля вывода (адреса экрана и кадров для стирания) — не моделируются и не сверяются
 const DRAW_FIELDS = [11, 12, 13, 14, 15, 16, 17, 18, 22, 23, 24, 25];
 
-module.exports = { update_sprite, init_sprite, kill_sprite, random_sprite_action, reset_sprites, DRAW_FIELDS };
+const E = module.exports = { update_sprite, init_sprite, kill_sprite, random_sprite_action, reset_sprites, DRAW_FIELDS };
