@@ -65,22 +65,22 @@ O_ODD			equ		15
 O_OE			equ		16
 O_DRAWN			equ		17
 O_PEND			equ		18					; 1 = объект ещё не обработан в этом тике (планировщик BEAM)
-OSZ				equ		19
+O_FN			equ		19					; код объекта (do_N)
+OSZ				equ		21
 
-	MACRO OBJ x, y, dx, dy, anim, tr, tl
+	MACRO OBJ x, y, dx, dy, anim, tr, tl, fn
 				DB		x, y, dx, dy, 16, 68, 32, 124, anim
 				DW		tr, tl, 0
 				DB		0, 0, 0, 0
+				DW		fn
 	ENDM
-objs:			OBJ		40, 100, 1, 2, 0, t_knight_r, t_knight_l
-				OBJ		20, 40, 2, 4, 3, t_axe, t_axe
-				OBJ		60, 50, -1, 2, 5, t_ghost, t_ghost
-				OBJ		30, 110, 1, -2, 9, t_bat, t_bat
-				OBJ		50, 80, -1, -2, 13, t_witch, t_witch
-				OBJ		64, 120, 1, 2, 17, t_pumpkin, t_pumpkin
+objs:			OBJ		40, 100, 1, 2, 0, t_knight_r, t_knight_l, do_0
+				OBJ		20, 40, 2, 4, 3, t_axe, t_axe, do_1
+				OBJ		60, 50, -1, 2, 5, t_ghost, t_ghost, do_2
+				OBJ		30, 110, 1, -2, 9, t_bat, t_bat, do_3
+				OBJ		50, 80, -1, -2, 13, t_witch, t_witch, do_4
+				OBJ		64, 120, 1, 2, 17, t_pumpkin, t_pumpkin, do_5
 
-; рабочая копия текущего объекта
-o_cur:			DS		OSZ
 o_ptr:			DW		0
 o_cnt:			DB		0
 
@@ -107,6 +107,19 @@ cp_kv:			ld		d, (hl)
 				ld		a, h
 				cp		high (KVAZ0 - 1)
 				jp		nz, cp_kv
+	IFDEF OVR
+				; фон 0x8000..0xDFFF -> квазидиск по тем же адресам (восстановление при стирании)
+				ld		hl, 0xE000 - 1
+				ld		sp, 0xE000
+cp_bg:			ld		d, (hl)
+				dec		hl
+				ld		e, (hl)
+				dec		hl
+				push	de
+				ld		a, h
+				cp		0x7F
+				jp		nz, cp_bg
+	ENDIF
 				xor		a
 				out		(0x10), a
 				ld		sp, STACK
@@ -250,57 +263,60 @@ tk_l:			call	do_obj
 				jp		tick_done
 	ENDIF
 
-; ---- один объект: стереть, сдвинуть, нарисовать (объект по адресу o_ptr) ----
-do_obj:			ld		hl, (o_ptr)
-				ld		de, o_cur
-				call	copy_obj
+; ---- один объект: стереть, сдвинуть, нарисовать. Код на каждый объект (адреса полей — константы,
+;      без копии в рабочую область); вызов — do_obj по o_ptr через поле O_FN ----
+	MACRO DOOBJ ob
 				; стереть прежнее положение
-				ld		a, (o_cur + O_DRAWN)
+				ld		a, (ob + O_DRAWN)
 				or		a
-				jp		z, no_erase
-				ld		a, (o_cur + O_ODD)
+				jp		z, .no_erase
+				ld		a, (ob + O_ODD)
 				ld		d, a
-				ld		a, (o_cur + O_OE)
+				ld		a, (ob + O_OE)
 				ld		e, a
-				ld		hl, (o_cur + O_OD)
+				ld		hl, (ob + O_OD)
+	IFDEF OVR
+				call	ovr_erase
+	ELSE
 				call	blit
-no_erase:		; движение по x с отражением
-				ld		a, (o_cur + O_DX)
-				ld		hl, o_cur + O_X
+	ENDIF
+.no_erase:		; движение по x с отражением
+				ld		a, (ob + O_DX)
+				ld		hl, ob + O_X
 				add		a, (hl)
 				ld		(hl), a
-				ld		hl, o_cur + O_XMIN
+				ld		hl, ob + O_XMIN
 				cp		(hl)
-				jp		c, bounce_x
-				ld		hl, o_cur + O_XMAX
+				jp		c, .bounce_x
+				ld		hl, ob + O_XMAX
 				cp		(hl)
-				jp		c, move_y
-bounce_x:		ld		a, (o_cur + O_DX)
+				jp		c, .move_y
+.bounce_x:		ld		a, (ob + O_DX)
 				cpl
 				inc		a
-				ld		(o_cur + O_DX), a
-				ld		hl, o_cur + O_X
+				ld		(ob + O_DX), a
+				ld		hl, ob + O_X
 				add		a, (hl)				; шаг назад: x = x - dx_старый
 				ld		(hl), a
-move_y:			ld		a, (o_cur + O_DY)
-				ld		hl, o_cur + O_Y
+.move_y:			ld		a, (ob + O_DY)
+				ld		hl, ob + O_Y
 				add		a, (hl)
 				ld		(hl), a
-				ld		hl, o_cur + O_YMIN
+				ld		hl, ob + O_YMIN
 				cp		(hl)
-				jp		c, bounce_y
-				ld		hl, o_cur + O_YMAX
+				jp		c, .bounce_y
+				ld		hl, ob + O_YMAX
 				cp		(hl)
-				jp		c, anim
-bounce_y:		ld		a, (o_cur + O_DY)
+				jp		c, .anim
+.bounce_y:		ld		a, (ob + O_DY)
 				cpl
 				inc		a
-				ld		(o_cur + O_DY), a
-				ld		hl, o_cur + O_Y
+				ld		(ob + O_DY), a
+				ld		hl, ob + O_Y
 				add		a, (hl)
 				ld		(hl), a
-anim:			; шаг анимации = (счётчик / 4) mod 8, таблица по знаку dx
-				ld		hl, o_cur + O_ANIM
+.anim:			; шаг анимации = (счётчик / 4) mod 8, таблица по знаку dx
+				ld		hl, ob + O_ANIM
 				inc		(hl)
 				ld		a, (hl)
 	IFDEF PIX1
@@ -308,31 +324,31 @@ anim:			; шаг анимации = (счётчик / 4) mod 8, таблица �
 				add		a, a
 				and		0x70				; шаг*16 (запись таблицы — 8 фаз по 2 байта)
 				ld		c, a
-				ld		a, (o_cur + O_X)
+				ld		a, (ob + O_X)
 				and		7
 	ELSE
 				add		a, a
 				and		0x38				; шаг*8 (запись таблицы — 4 фазы по 2 байта)
 				ld		c, a
-				ld		a, (o_cur + O_X)
+				ld		a, (ob + O_X)
 				and		3
 	ENDIF
 				add		a, a
 				add		a, c
 				ld		c, a
 				ld		b, 0
-				ld		a, (o_cur + O_DX)
+				ld		a, (ob + O_DX)
 				or		a
-				ld		hl, (o_cur + O_TR)
-				jp		p, anim_r
-				ld		hl, (o_cur + O_TL)
-anim_r:			add		hl, bc
+				ld		hl, (ob + O_TR)
+				jp		p, .anim_r
+				ld		hl, (ob + O_TL)
+.anim_r:			add		hl, bc
 				ld		a, (hl)
 				inc		hl
 				ld		h, (hl)
 				ld		l, a
-				ld		(o_cur + O_OD), hl
-				ld		a, (o_cur + O_X)
+				ld		(ob + O_OD), hl
+				ld		a, (ob + O_X)
 				rrca
 				rrca
 	IFDEF PIX1
@@ -343,21 +359,36 @@ anim_r:			add		hl, bc
 				and		0x3F
 				add		a, 0x80
 	ENDIF
-				ld		(o_cur + O_ODD), a
+				ld		(ob + O_ODD), a
 				ld		d, a
-				ld		a, (o_cur + O_Y)
+				ld		a, (ob + O_Y)
 				cpl
 				add		a, ROW0 + 1			; ROW0 - y
-				ld		(o_cur + O_OE), a
+				ld		(ob + O_OE), a
 				ld		e, a
+	IFDEF OVR
+				call	ovr_draw
+	ELSE
 				call	blit
+	ENDIF
 				ld		a, 1
-				ld		(o_cur + O_DRAWN), a
-				; вернуть объект
-				ld		hl, (o_ptr)
+				ld		(ob + O_DRAWN), a
+				ret
+	ENDM
+do_obj:			ld		hl, (o_ptr)
+				ld		de, O_FN
+				add		hl, de
+				ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
 				ex		de, hl
-				ld		hl, o_cur
-				jp		copy_obj
+				jp		(hl)
+do_0:			DOOBJ objs + 0*OSZ
+do_1:			DOOBJ objs + 1*OSZ
+do_2:			DOOBJ objs + 2*OSZ
+do_3:			DOOBJ objs + 3*OSZ
+do_4:			DOOBJ objs + 4*OSZ
+do_5:			DOOBJ objs + 5*OSZ
 
 tick_done:		ld		hl, (vt_ticks)
 				inc		hl
@@ -393,7 +424,11 @@ ec_loop:		ld		hl, (o_ptr)
 				inc		hl
 				ld		e, (hl)				; O_OE
 				pop		hl
+	IFDEF OVR
+				call	ovr_erase
+	ELSE
 				call	blit
+	ENDIF
 ec_next:		ld		hl, o_cnt
 				dec		(hl)
 				jp		nz, ec_loop
@@ -403,14 +438,6 @@ ec_next:		ld		hl, o_cnt
 	ENDIF
 				jp		tick
 
-copy_obj:		ld		c, OSZ				; HL -> DE, OSZ байт
-co_l:			ld		a, (hl)
-				ld		(de), a
-				inc		hl
-				inc		de
-				dec		c
-				jp		nz, co_l
-				ret
 
 ; ---- blit: XOR спрайта из квазидиска. HL = дескриптор, D = 0x80 + столбец, E = строка памяти верха ----
 ; Портит всё. Прерывания должны быть запрещены (стековый режим).
@@ -479,6 +506,231 @@ bl_cnt:			DB		0
 bl_desc:		DW		0
 bl_ssp:			DW		0
 
+	IFDEF OVR
+; ---- запись без XOR (tools/mkovr.py). Дескриптор: DW квазидиск, вход рисования, вход нулей, вход
+;      восстановления; DB сдвиг строки, высота, столбцов, данных N, смещения.., нулей M, смещения..
+;      Смещение = столбец + 0x20*плоскость. HL = дескриптор, D = 0x80 + столбец, E = строка памяти ----
+; разбор заголовка: HL = дескриптор, D = 0x80 + столбец, E = строка памяти. Вписывает в код столбец,
+; верх, указатель карты фона; возвращает DE = список блоков данных, HL = входы (с вход нулей)
+ovr_hdr:		ld		a, d
+				ld		(dr_col + 1), a
+				ld		(zd_col + 1), a
+				ld		(ze_col + 1), a
+				ld		(er_c), a
+				sub		0x80
+				ld		(hd_c0 + 1), a
+				push	hl
+				ld		bc, 8
+				add		hl, bc
+				ld		a, e
+				sub		(hl)				; верх рамки
+				inc		hl
+				ld		(dr_top + 1), a
+				inc		a
+				ld		(zd_top + 1), a
+				ld		(ze_top + 1), a
+				sub		(hl)				; верх + 1 - высота = низ
+				inc		hl
+				ld		(er_bot + 1), a
+				ld		c, (hl)				; столбцов
+				inc		hl
+				ld		a, c
+				ld		(er_n), a
+				ex		de, hl				; DE = список данных
+				ld		a, (er_bot + 1)
+				and		0xF8
+				ld		l, a
+				ld		h, 0
+				add		hl, hl
+				add		hl, hl				; группа*32
+hd_c0:			ld		a, 0
+				add		a, l
+				ld		l, a				; + столбец (в пределах 32-байтного блока)
+				ld		bc, bgf
+				add		hl, bc
+				ld		(er_f), hl
+				ld		a, l
+				ld		(zd_fl + 1), a
+				ld		(ze_fl + 1), a
+				ld		a, h
+				ld		(zd_fh + 1), a
+				ld		(ze_fh + 1), a
+				pop		hl
+				ret
+
+ovr_draw:		call	ovr_hdr
+				ld		c, (hl)
+				inc		hl
+				ld		b, (hl)				; BC = данные в квазидиске
+				inc		hl
+				ld		a, (hl)
+				inc		hl
+				ld		(dr_jp + 1), a
+				ld		a, (hl)
+				inc		hl
+				ld		(dr_jp + 2), a
+				ld		a, (hl)
+				inc		hl
+				ld		(zd_jp + 1), a
+				ld		a, (hl)
+				ld		(zd_jp + 2), a
+				ld		hl, zd_next
+				ld		(zr_ret + 1), hl
+				ld		hl, 0
+				add		hl, sp
+				ld		(od_ssp), hl
+				ld		h, b
+				ld		l, c
+				ld		a, 0x10
+				out		(0x10), a
+				ld		sp, hl
+				; проход 1: блоки данных
+dr_next:		ld		a, (de)
+				inc		de
+				or		a
+				jp		m, dr_end
+dr_col:			add		a, 0
+				ld		h, a
+dr_top:			ld		l, 0
+dr_jp:			jp		0
+dr_body:
+				DUP		MAXPAIRS
+				pop		bc
+				ld		(hl), c
+				dec		l
+				ld		(hl), b
+				dec		l
+				EDUP
+				jp		dr_next
+dr_end:			xor		a
+				out		(0x10), a
+				; проход 2: нули в блоках без данных — только где под рамкой фон
+				ld		bc, 0
+zd_next:		ld		a, (de)
+				inc		de
+				or		a
+				jp		m, od_done
+				and		0x1F
+zd_fl:			add		a, 0
+				ld		l, a
+zd_fh:			ld		h, 0
+				ld		a, (hl)
+				or		a
+				jp		z, zd_next
+				dec		de
+				ld		a, (de)
+				inc		de
+zd_col:			add		a, 0
+				ld		h, a
+zd_top:			ld		l, 0
+				ld		sp, hl
+zd_jp:			jp		0
+zr_body:
+				DUP		MAXPAIRS
+				push	bc
+				EDUP
+zr_ret:			jp		0
+od_done:		ld		hl, (od_ssp)
+				ld		sp, hl
+				ret
+
+; стирание: проход 1 — нули в блоках данных столбцов на чёрном полу; проход 2 — столбцы над фоном:
+; копия фона из квазидиска во все 3 плоскости
+ovr_erase:		call	ovr_hdr
+				inc		hl
+				inc		hl
+				inc		hl
+				inc		hl
+				ld		a, (hl)
+				inc		hl
+				ld		(ze_jp + 1), a
+				ld		a, (hl)
+				inc		hl
+				ld		(ze_jp + 2), a
+				ld		a, (hl)
+				inc		hl
+				ld		(rs_jp + 1), a
+				ld		a, (hl)
+				ld		(rs_jp + 2), a
+				ld		hl, ze_next
+				ld		(zr_ret + 1), hl
+				ld		hl, 0
+				add		hl, sp
+				ld		(od_ssp), hl
+				ld		bc, 0
+ze_next:		ld		a, (de)
+				inc		de
+				or		a
+				jp		m, er_go
+				and		0x1F
+ze_fl:			add		a, 0
+				ld		l, a
+ze_fh:			ld		h, 0
+				ld		a, (hl)
+				or		a
+				jp		nz, ze_next
+				dec		de
+				ld		a, (de)
+				inc		de
+ze_col:			add		a, 0
+				ld		h, a
+ze_top:			ld		l, 0
+				ld		sp, hl
+ze_jp:			jp		0
+er_go:			ld		hl, (er_f)
+er_loop:		ld		a, (hl)
+				inc		hl
+				or		a
+				jp		z, er_skip
+				ld		(er_f), hl
+				ld		a, 3
+				ld		(er_k), a
+				ld		a, 0x10
+				out		(0x10), a
+				ld		a, (er_c)
+				ld		h, a
+er_bot:			ld		l, 0
+er_pl:			ld		(er_hl), hl
+				ld		sp, hl
+rs_jp:			jp		0
+rs_body:
+				DUP		MAXPAIRS
+				pop		bc
+				ld		(hl), c
+				inc		l
+				ld		(hl), b
+				inc		l
+				EDUP
+				ld		hl, (er_hl)
+				ld		a, h
+				add		a, 0x20
+				ld		h, a
+				ld		a, (er_k)
+				dec		a
+				ld		(er_k), a
+				jp		nz, er_pl
+				xor		a
+				out		(0x10), a
+				ld		hl, (er_f)
+er_skip:		ld		a, (er_c)
+				inc		a
+				ld		(er_c), a
+				ld		a, (er_n)
+				dec		a
+				ld		(er_n), a
+				jp		nz, er_loop
+				jp		od_done
+DR_PAIR			equ		5
+RS_PAIR			equ		5
+od_ssp:			DW		0
+er_f:			DW		0
+er_hl:			DW		0
+er_c:			DB		0
+er_n:			DB		0
+er_k:			DB		0
+				ALIGN	256
+bgf:			INCBIN	"../build/proto/bgf.bin"
+	ENDIF
 				INCLUDE	"../build/proto/spr_desc.inc"
 code_end:
 				ASSERT	code_end <= STACK - 0x100

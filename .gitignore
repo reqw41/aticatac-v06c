@@ -12,6 +12,8 @@ stand/cpc/*.bin
 stand/cpc/SNAPS/
 stand/cpc/cfg/
 stand/cpc/*.log
+stand/cpc/rm*.bin
 stand/cpc/*.out
 stand/cpc/trace.txt
 .DS_Store
+stand/cpc/rooms/
