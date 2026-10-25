@@ -16,7 +16,8 @@ for a, lab in p['patch']: out.append('\t\t\t\tORG\t0x%04X\n\t\t\t\tDW\t%s' % (a,
 open('build/game/patch.inc', 'w').write('\n'.join(out) + '\n')
 PY
 python3 -I tools/layout.py
-(cd src/vec && ../../tools/sjasmplus --nologo --i8080 $SJFLAGS game.asm --sym=../../build/game/aticatac.sym 2>&1 | grep -E "rror|arning" || true)
+(cd src/vec && ../../tools/sjasmplus --nologo --i8080 $SJFLAGS game.asm --sym=../../build/game/aticatac.sym > ../../build/game/sjasm.log 2>&1) || true
+if ! grep -q "Errors: 0" build/game/sjasm.log; then grep -iE "error|warning" build/game/sjasm.log | head -20; echo "СБОРКА НЕ УДАЛАСЬ"; exit 1; fi
 python3 - <<'PY'
 # квазидиск: стр. 1 — предметы комнат, стр. 2 — контуры + ключи/еда (0xA300), стр. 3 — спрайты
 edd = bytearray(0x40000)
@@ -26,6 +27,7 @@ put(1, 0, 'build/room/items1.bin')
 put(2, 0, 'build/room/items2.bin')
 put(2, 0xA300, 'build/game/kv2_items.bin')
 put(3, 0, 'build/game/kv3_spr.bin')
+put(2, 0xC000, 'build/game/bgf_rooms.bin')
 assert len(open('build/room/items2.bin', 'rb').read()) <= 0xA300
 open('build/game/aticatac.edd', 'wb').write(edd)
 print('aticatac.edd: 256 КБ')

@@ -2,10 +2,15 @@
 """Графика игры для Вектора (этап 3, docs/LOGIC_PLAN.md): спрайты героев, врагов, боссов, оружия — поток для
 квазидиска; ключи, еда, могила — описатели предметов (как в tools/mkroom.py); правки образа страницы 0 CPC.
 
-Спрайт (XOR, 3 плоскости, 4 фазы = x & 3 пикселя CPC): в ОЗУ — запись кадра
-    DB высота (чётная), сдвиг сверху, порт квазидиска (0x10 | стр << 2); DW адреса фаз 0..3
-в квазидиске на фазу — поток слов для POP: блок = (смещение, 0) и высота байт (строки сверху вниз);
-конец = (0xFF, 2). Смещение = столбец + 0x20 * плоскость; пустые блоки не хранятся.
+Спрайт (3 плоскости, 4 фазы = x & 3 пикселя CPC): в ОЗУ — запись кадра
+    DB высота (чётная), сдвиг сверху, порт квазидиска (0x10 | стр << 2); DW адреса фаз 0..3;
+    DB столбцов фазы 0..3
+в квазидиске на фазу — поток слов для POP: блок данных = (смещение, 0) и высота байт (строки сверху вниз);
+блок рамки без данных = (смещение, 1); конец = (0xFF, 2). Смещение = столбец + 0x20 * плоскость.
+XOR-вывод пропускает блоки без данных, замещение пишет в них нули.
+Карта фона комнат (bgf): на комнату 72 байта — по столбцу поля (24) 3 байта бит групп по 8 строк
+(24 группы, бит 0 первого байта — строки 0..7); «есть фон» = контур, предметы в обоих состояниях дверей.
+Квазидиск стр. 2 с BGF_ADDR.
 
 Указатели на графику, которые читает только вывод, переписываются в образе страницы 0 указателями на записи:
 списки кадров врагов и боссов (struct + 5.., alt-списки), кадры оружия (+4), таблица еды, ключи (+1).
@@ -56,16 +61,17 @@ class KV:
         return p, a
 
 def sprite_streams(rows):
-    """перья -> (yoff, h, [поток фазы 0..3])"""
+    """перья -> (yoff, h, [поток фазы 0..3], [столбцов фазы 0..3])"""
     pens = [[SLOT[p] for p in r] for r in rows]
     y0 = next((i for i, r in enumerate(pens) if any(r)), 0)
     y1 = max((i for i, r in enumerate(pens) if any(r)), default=0) + 1
     pens = pens[y0:y1]
     if len(pens) % 2: pens.append([0] * len(pens[0]))
     w = len(pens[0])
-    out = []
+    out = []; ncols = []
     for ph in range(4):
         ncol = (2 * (w + ph) + 7) // 8
+        ncols.append(ncol)
         data, zero = [], []
         for c in range(ncol):
             for k in range(NPL):
@@ -80,9 +86,10 @@ def sprite_streams(rows):
                 else: zero.append(c + 0x20 * k)
         s = bytearray()
         for off, col in data: s += bytes((off, 0)) + bytes(col)
+        for off in zero: s += bytes((off, 1))
         s += bytes((0xff, 2))
         out.append(bytes(s))
-    return y0, len(pens), out
+    return y0, len(pens), out, ncols
 
 kv = KV([(3, 0x0000, 0x10000), (0, 0x0000, 0x8000)])
 frames = {}                                        # ключ -> метка записи
@@ -91,7 +98,8 @@ stat = dict(frames=0, bytes=0)
 
 def frame(key, rows):
     if key in frames: return frames[key]
-    y0, h, streams = sprite_streams(rows)
+    y0, h, streams, ncols = sprite_streams(rows)
+    assert h <= 24, (key, h)
     addrs = []; page = None
     for s in streams:
         p, a = kv.put(s)
@@ -100,7 +108,7 @@ def frame(key, rows):
             p, a = kv.put(s); page = p
         addrs.append(a); stat['bytes'] += len(s)
     lab = 'fr_%d' % len(frames)
-    inc.append('%s:\tDB %d, %d, 0x%02X\n\tDW %s\t; %s' % (lab, h, y0, 0x10 | (page << 2), ', '.join('0x%04X' % a for a in addrs), key))
+    inc.append('%s:\tDB %d, %d, 0x%02X\n\tDW %s\n\tDB %s\t; %s' % (lab, h, y0, 0x10 | (page << 2), ', '.join('0x%04X' % a for a in addrs), ', '.join(str(n) for n in ncols), key))
     frames[key] = lab; stat['frames'] += 1
     return lab
 
@@ -198,7 +206,29 @@ for t in range(10):
     if not hgt: continue
     patch.append((S['food_table'] + 2 * t, item_desc('food_%d' % t, gfx('rooms', a, 4, hgt))))
 
+# --- карта фона комнат: оба состояния дверей
+BGF_ADDR = 0xC000
+bgf = bytearray()
+rooms_bank = bytearray(rooms)
+for n in range(143):
+    grid = [[0] * 24 for _ in range(24)]
+    for force in (0x00, 0x80):
+        b = bytearray(rooms_bank)
+        for ix in range(S['room_bank_item_list'], S['room_bank_items_per_room'], 8):
+            b[ix - 0x4000 + 2] = (b[ix - 0x4000 + 2] & 0x7f) | force
+        rr.use_rooms_bank(bytes(b))
+        px = rr.render(n)
+        for c in range(24):
+            for y in range(192):
+                if any(px[y][c * 4 + j] for j in range(4)): grid[c][y >> 3] = 1
+    for c in range(24):
+        v = sum(grid[c][g] << g for g in range(24))
+        bgf += bytes((v & 255, (v >> 8) & 255, v >> 16))
+rr.use_rooms_bank(bytes(rooms_bank))
+assert BGF_ADDR + len(bgf) <= 0x10000 and 0xA300 + len(kv2.data[2]) <= BGF_ADDR
+inc.append('BGF_ADDR\tequ 0x%04X' % BGF_ADDR)
 os.makedirs(OUT, exist_ok=True)
+open(os.path.join(OUT, 'bgf_rooms.bin'), 'wb').write(bgf)
 for p, d in list(kv.data.items()) + [(2, kv2.data[2])]:
     if d: open(os.path.join(OUT, 'kv%d_%s.bin' % (p, 'spr' if (p, d) in kv.data.items() else 'items')), 'wb').write(d)
 open(os.path.join(OUT, 'sprites.inc'), 'w').write('\n'.join(inc) + '\n')

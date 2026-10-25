@@ -43,6 +43,20 @@ ml_once:		call	logic_step
 				call	collect_events
 				call	apply_events
 				call	render_sprites
+	IFDEF ECHK
+				ld		hl, (echk_n)			; проверка стенда: после ECHK шагов стереть всё и встать
+				inc		hl
+				ld		(echk_n), hl
+				ld		a, h
+				cp		high ECHK
+				jp		nz, main_loop
+				ld		a, l
+				cp		low ECHK
+				jp		nz, main_loop
+				call	erase_all
+echk_stop:		jp		echk_stop
+echk_n:			DW		0
+	ENDIF
 				jp		main_loop
 
 ; шаг логики: ввод, heartbeat, часы, звук, задача состояния
@@ -166,7 +180,7 @@ apply_events:	ld		a, (ev_room)
 				jp		z, ae_1
 				call	render_room				; долго под DI: прерывания терялись —
 				call	forget_all
-				call	ev_reset
+room_drawn:		call	ev_reset					; (метка — стенду: экран = фон комнаты)
 resync:			ei								; дождаться прерывания (счётчик перезарядится)
 				halt
 				ld		a, (frames)
@@ -226,6 +240,7 @@ ae_6:			ld		hl, (ev_tomb)
 				ld		a, h
 				or		l
 				call	nz, draw_food_item
+bg_changed:		nop								; (метка — стенду: спрайты стёрты, экран = фон)
 ev_reset:		xor		a
 				ld		(ev_room), a
 				ld		(ev_clear), a

@@ -35,6 +35,13 @@ const rw = a => rd(a) | rd(a + 1) << 8;
 
 const edd = fs.readFileSync(ROOTD + '/build/game/aticatac.edd');
 for (let p = 0; p < 4; p++) for (let a = 0; a < 0x10000; a++) memory.bytes[memory.tobank(((p + 1) << 16) + a)] = edd[p * 0x10000 + a];
+let upd = null, updN = 0, updTear = 0, updDepth = 0;
+const mw = memory.write.bind(memory);
+memory.write = function (addr, v, st) {
+  if (upd && !st && addr >= 0x8000 && addr < 0xe000) { const r = addr & 0xff; if (r < upd.r0) upd.r0 = r; if (r > upd.r1) upd.r1 = r; }
+  return mw(addr, v, st);
+};
+const beamRow = () => { const l = Math.floor(frc / 192) - 40; return l >= 0 && l < 256 ? 255 - l : -1; };
 const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] };
 const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
 fs.mkdirSync(OUTDIR, { recursive: true });
@@ -42,7 +49,7 @@ let frc = 0, frames = 0, tacc = 0, total = 0;
 const N = +NF;
 let lastTicks = 0, lastT = 0;
 const tk = S.main_loop;
-let loops = 0, tickT = []; let irqUntil = -1, irqOk = 0, irqLost = 0; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
+let loops = 0, tickT = []; let updRet = -1, updSp = -1; let nRep = 0, nXor = 0, nNew = 0; let bgSnap = null, rooms = 0, echkDone = false; let irqUntil = -1, irqOk = 0, irqLost = 0; const hist = []; let seq = [], seqLast = '', seqN = 0; const prof = {}, profCache = new Map(); let spBad = false, spOn = false; const spHist = [];
 const exS = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0]));
 const labsS = Object.entries(S).filter(([k]) => !exS.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]);
 const nmOf = (p) => { let r='?'; for (const [k,v] of labsS) { if (v<=p) r=k+'+'+(p-v); else break; } return r; };
@@ -69,6 +76,19 @@ while (frames < N) {
     spHist.push(cpu.pc); if (spHist.length > 12) spHist.shift();
   }
   if (process.env.TRACE) { hist.push(cpu.pc + 0x10000 * cpu.sp); if (hist.length > 60) hist.shift(); if (!okpc[cpu.pc]) { const ex = new Set(fs.readFileSync(ROOTD + '/build/l80/cpcsym.inc', 'utf8').split('\n').map((l) => l.split(/\s/)[0])); const labs = Object.entries(S).filter(([k]) => !ex.has(k) && !/^(ROW0|NITEMT|KV_|FOOD|SKEL|ROOM_BANK|FD_N|TOMB|FOODI|SPR_LEN|BS|FHS|FVS|S_PERSIST|ST_|NOBJ|OB|MAXPAIRS|BX_PAIR|DR_PAIR|RS_PAIR|ck)/.test(k)).sort((a,b)=>a[1]-b[1]); const nm = (p) => { let r='?'; for (const [k,v] of labs) { if (v<=p) r=k+'+'+(p-v); else break; } return r; }; console.log(hist.map((q)=>{const p=q&0xffff, sp=Math.floor(q/0x10000); return p.toString(16)+' sp '+sp.toString(16)+' '+nm(p);}).join('\n')); process.exit(1); } }
+  if (S.room_drawn !== undefined && (cpu.pc === S.room_drawn || cpu.pc === S.bg_changed)) { bgSnap = Buffer.alloc(0x6000); for (let a = 0; a < 0x6000; a++) bgSnap[a] = rd(0x8000 + a); rooms++; }
+  if (S.echk_stop !== undefined && cpu.pc === S.echk_stop && !echkDone) {
+    echkDone = true; let bad = 0, first = -1;
+    for (let a = 0; a < 0x6000; a++) if (rd(0x8000 + a) !== bgSnap[a]) { bad++; if (first < 0) first = a; }
+    console.log(`ECHK: смен комнаты ${rooms}, отличий от фона ${bad}` + (bad ? ` (первое: плоскость ${first >> 13} столбец ${(first >> 8) & 31} строка ${first & 255})` : ''));
+  }
+  if (cpu.pc === S.obj_update && !upd) { upd = { r0: 999, r1: -1, b0: beamRow(), f0: frames, rows: new Set() }; updRet = memory.bytes[memory.tobank(cpu.sp)] | memory.bytes[memory.tobank((cpu.sp + 1) & 0xffff)] << 8; updSp = cpu.sp; }
+  if (upd) { const b = beamRow(); if (b >= 0) upd.rows.add(b); }
+  if (upd && cpu.pc === updRet && cpu.sp === ((updSp + 2) & 0xffff)) {
+    if (upd.r1 >= 0) { updN++; let hit = false; for (const r of upd.rows) if (r >= upd.r0 && r <= upd.r1) { hit = true; break; } if (hit) updTear++; }
+    upd = null;
+  }
+  if (cpu.pc === S.zero_leftover) nRep++; else if (cpu.pc === S.ou_xor) nXor++; else if (cpu.pc === S.ou_newonly) nNew++;
   if (cpu.pc === S.ml_once) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
   if (irqUntil >= 0) {
     if (cpu.iff) { v06c.irq = true; v06c.checkInterrupt(); irqUntil = -1; irqOk++; }
@@ -82,6 +102,7 @@ while (frames < N) {
 }
 if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
 tickT.sort((a, b) => a - b);
+console.log(`обновлений: замещение на месте ${nRep}, XOR ${nXor}, появление ${nNew}; луч прошёл по строкам объекта во время обновления: ${updTear} из ${updN} (${(updTear / updN * 100).toFixed(1)}%)`);
 console.log(`прерываний: дошло ${irqOk}, потеряно ${irqLost}; игра заметила потерянных ${rd(S.lost_frames) | rd(S.lost_frames + 1) << 8}`);
 console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);
 console.log('pc', cpu.pc.toString(16), 'objs', [...Array(72).keys()].map((i) => rd(S.objs + i).toString(16)).join(' '));

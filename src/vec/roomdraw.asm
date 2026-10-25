@@ -8,6 +8,7 @@ render_room:	ld		a, (C_room_number)
 				call	clear_room
 				call	draw_outline
 				call	draw_items_v
+				call	load_bgf
 				call	draw_collectables
 				jp		draw_room_food
 dr_room:		DB		0
@@ -304,6 +305,9 @@ draw_item:		di								; стековый режим квазидиска
 				ld		(dt_col), a
 				ld		a, e
 				ld		(dt_top), a
+				push	bc
+				call	bg_mark_item
+				pop		bc
 				ld		hl, 0
 				add		hl, sp
 				ld		(dt_ssp), hl
@@ -497,3 +501,128 @@ ia_ph0:			and		0x7f
 				add		a, ROW0 + 1
 				ld		e, a					; строка памяти верха
 				jp		draw_item
+
+; ---- карта фона комнаты: bgraw[столбец * 24 + группа 8 строк] = 1, если там фон (контур, предметы, ключи,
+;      еда). Основа — tools/mkgame.py (квазидиск стр. 2, BGF_ADDR, 72 байта на комнату), рисуемое добавляется.
+bgraw:			DS		24 * 24
+bgtmp:			DS		72
+load_bgf:		ld		a, (C_room_number)
+				ld		l, a
+				ld		h, 0
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl					; *8
+				push	hl
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl					; *64
+				pop		de
+				add		hl, de					; *72
+				ld		de, BGF_ADDR
+				add		hl, de
+				di
+				ex		de, hl
+				ld		hl, 0
+				add		hl, sp
+				ld		(lb_ssp), hl
+				ex		de, hl
+				ld		a, 0x10 | (2 << 2)
+				out		(0x10), a
+				ld		sp, hl
+				ld		hl, bgtmp
+				ld		b, 36
+lb_l:			pop		de
+				ld		(hl), e
+				inc		hl
+				ld		(hl), d
+				inc		hl
+				dec		b
+				jp		nz, lb_l
+				xor		a
+				out		(0x10), a
+				ld		hl, (lb_ssp)
+				ld		sp, hl
+				ei
+				ld		hl, bgtmp
+				ld		de, bgraw
+				ld		c, 24 * 3				; байтов бит
+lb_b:			ld		a, (hl)
+				inc		hl
+				ld		b, 8
+lb_bit:			rra
+				push	af
+				sbc		a, a
+				and		1
+				ld		(de), a
+				inc		de
+				pop		af
+				dec		b
+				jp		nz, lb_bit
+				dec		c
+				jp		nz, lb_b
+				ret
+lb_ssp:			DW		0
+; отметить рамку рисуемого предмета: dt_col (0x80+), dt_n столбцов, dt_top (строка памяти), dt_rows
+bg_mark_item:	ld		a, (dt_top)
+				cpl
+				add		a, ROW0 + 1				; y верха
+				cp		192
+				ret		nc
+				ld		e, a
+				ld		a, (dt_rows)
+				add		a, e
+				dec		a
+				cp		192
+				jp		c, bm_1
+				ld		a, 191
+bm_1:			rrca
+				rrca
+				rrca
+				and		0x1f
+				ld		d, a					; группа низа
+				ld		a, e
+				rrca
+				rrca
+				rrca
+				and		0x1f
+				ld		e, a					; группа верха
+				ld		a, (dt_col)
+				sub		0x80
+				ld		c, a
+				ld		a, (dt_n)
+				ld		b, a
+bm_col:			ld		a, c
+				cp		24
+				ret		nc
+				push	bc
+				ld		l, c
+				ld		h, 0
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl
+				push	de
+				ld		d, h
+				ld		e, l
+				add		hl, hl
+				add		hl, de
+				pop		de
+				ld		a, l
+				add		a, e
+				ld		l, a
+				jp		nc, bm_2
+				inc		h
+bm_2:			ld		bc, bgraw
+				add		hl, bc
+				ld		a, d
+				sub		e
+				inc		a
+				ld		b, a
+bm_g:			ld		(hl), 1
+				inc		hl
+				dec		b
+				jp		nz, bm_g
+				pop		bc
+				inc		c
+				dec		b
+				jp		nz, bm_col
+				ret
