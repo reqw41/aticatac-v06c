@@ -1,0 +1,17 @@
+# сборка и чужое (CPC-исходники без лицензии, skool ZX, rasm) — не в репозитории
+build/
+ref/
+tools/src/
+tools/rasm
+tools/sjasmplus
+__pycache__/
+# стенд CPC: образы, ROM, дампы и выводы MAME
+stand/cpc/roms
+stand/cpc/*.dsk
+stand/cpc/*.bin
+stand/cpc/SNAPS/
+stand/cpc/cfg/
+stand/cpc/*.log
+stand/cpc/*.out
+stand/cpc/trace.txt
+.DS_Store
