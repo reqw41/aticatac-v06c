@@ -1,0 +1,4 @@
+{ "name": "s0_random",
+  "menu": [ { "frames": 150, "keys": [] }, { "frames": 10, "keys": ["SPACE"] }, { "frames": 5, "keys": [] } ],
+  "ticks": 3000,
+  "random": { "seed": 1, "keys": ["UP", "DOWN", "LEFT", "RIGHT", "SPACE", "Z"], "hold": [4, 40], "p": 0.3 } }
