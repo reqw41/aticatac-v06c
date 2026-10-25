@@ -3,14 +3,43 @@
 const { S } = require('./core');
 const { notModeled } = require('./util');
 const lazy = (m) => () => require(m);
-const sprite = lazy('./sprite'), weapon = lazy('./weapon'), snd = lazy('./sound');
+const sprite = lazy('./sprite'), weapon = lazy('./weapon'), snd = lazy('./sound'), player = lazy('./player'),
+  chicken = lazy('./chicken'), food = lazy('./food'), doors = lazy('./doors'), coll = lazy('./collectables'),
+  score = lazy('./score'), clock = lazy('./clock');
 
 function setTask(M, a) { M.wr(S.current_game_state + 1, a & 0xff); M.wr(S.current_game_state + 2, a >> 8); }
 
 function switch_game_state(M, b) {
   if (b === S.state_falling) return select_falling(M);
+  if (b === S.state_game) return select_game(M);
   if (b === S.state_end) return select_end(M);
   notModeled('switch_game_state ' + b);
+}
+
+// новая игра (state_manager.asm select_game, без вывода)
+function select_game(M) {
+  setTask(M, S.game_tasks);
+  M.wr16(S.current_interrupts, S.game_interrupts);
+  for (const n of ['room_number', 'player_orientation', 'game_over', 'heartbeat', 'frank_dead', 'mummy_angry', 'game_paused'])
+    M.wr(S[n], 0);
+  M.wr(S.room_changed, 1);
+  M.wr(S.saved_room_number, 1);
+  player().init_player(M);
+  chicken().init_health(M);
+  food().init_food(M);
+  doors().init_doors(M);
+  coll().init_collectables(M);
+  score().init_score(M);
+  M.bank(S.sprite_bank_config); M.bank(S.item_bank_config);      // draw_panel
+  M.wr16(S.font_type, (S.font_0 - 256) & 0xffff);
+  clock().reset_clock(M);
+  M.bank(S.room_bank_config);
+  const n = ((S.end_room_bank - S.room_bank_roominfo) >> 1) & 0xff;
+  for (let i = 0, hl = S.room_bank_roominfo; i < (n || 256); i++, hl += 2) M.wr(hl, M.rd(hl) & 0x7f);
+  M.bank(S.item_bank_config);
+  score().add_to_score(M, 0);
+  M.wr(S.boss_hunchback + 14, 44);
+  M.wr(S.boss_hunchback + 15, 32);
 }
 
 // конец игры: экран итогов (endgame.asm init_endgame — без вывода и звука)
@@ -56,4 +85,4 @@ function select_falling(M) {
   snd().play_sfx(M, S.sound_p_fall);
 }
 
-module.exports = { switch_game_state, setTask, end_tasks };
+module.exports = { switch_game_state, setTask, end_tasks, select_game };

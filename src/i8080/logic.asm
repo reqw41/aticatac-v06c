@@ -22,5 +22,17 @@ CODE80			equ		0xE000
 				INCLUDE	"util.asm"
 				INCLUDE	"weapon.asm"
 				INCLUDE	"sprite.asm"
+				INCLUDE	"boss.asm"
+				INCLUDE	"doors.asm"
+				INCLUDE	"items.asm"
+				INCLUDE	"room.asm"
+				INCLUDE	"food.asm"
+				INCLUDE	"chicken.asm"
+				INCLUDE	"player.asm"
+				INCLUDE	"collectables.asm"
+				INCLUDE	"clock.asm"
+				INCLUDE	"state.asm"
+				INCLUDE	"game.asm"
+				INCLUDE	"../../build/l80/item_wh.inc"
 code80_end:
 				SAVEBIN	"../../build/l80/logic.bin", CODE80, code80_end - CODE80

@@ -87,6 +87,11 @@ reg('add_tombstone', 'food');
 reg('pickup_tapped', 'collectables');
 reg('game_tasks', 'game');
 reg('falling_tasks', 'game');
+reg('end_tasks', 'state');
+reg('init_collectables', 'collectables');
+reg('init_food', 'food');
+reg('select_game', 'state');
+reg('switch_game_state', 'state', null, (M, b) => ({ b }));
 
 // --- зеркало памяти i8080
 const cpu = new CPU80();
@@ -201,6 +206,8 @@ const game = require('../src/model/game');
 const state = require('../src/model/state');
 let ownedSet = new Set();
 const TASK = { [S.game_tasks]: () => game.game_tasks, [S.falling_tasks]: () => game.falling_tasks, [S.end_tasks]: () => state.end_tasks };
+// задача шага — из состояния модели (current_game_state + 1), не из эталона: модель с фиксированным вводом
+// идёт своей дорогой
 for (const file of files) {
   curFile = path.basename(file, '.json.gz');
   const g = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)));
@@ -210,16 +217,28 @@ for (const file of files) {
   wlog.length = 0;
   rstream.v = [].concat(...g.ticks.map((t) => t.r)); rstream.i = 0;
   loadMirror();
+  {                                                 // каждый эталон — с новой игры (select_game и init_*)
+    const M = new Mem(jsRam, jsRam[S.memory_bank] & 7);
+    M.writes = { add: (f) => wlog.push(f) };
+    M.ldar = () => rstream.v[rstream.i++] || 0;
+    state.select_game(M);
+  }
   let n = 0;
   for (let t = 0; t < g.ticks.length && n < maxTicks; t++, n++) {
     tickNo = t;
     const tk = g.ticks[t];
-    const fnGet = TASK[tk.task];
+    const fnGet = TASK[jsRam[S.current_game_state + 1] | jsRam[S.current_game_state + 2] << 8];
     if (!fnGet) break;                             // меню — дальше состояние разошлось бы с эталоном
     const M = new Mem(jsRam, jsRam[S.memory_bank] & 7);
     M.writes = { add: (f) => wlog.push(f) };
     M.ldar = () => rstream.v[rstream.i++] || 0;
     for (const [a, v] of tk.pk || []) { jsRam[a] = v; wlog.push(a); }
+    // раз в 2000 шагов — падение (люк) в другую комнату: модель с фиксированным вводом сама в люки не ходит
+    if (t % 2000 === 1000 && fnGet === TASK[S.game_tasks]) {
+      jsRam[S.room_number] = (t * 7) % 140 + 1; wlog.push(S.room_number);
+      state.switch_game_state(M, S.state_falling);
+      continue;
+    }
     const last = new Map(); for (const [a, v] of tk.rd) last.set(a, v);
     for (const [a, v] of last) { jsRam[a] = v; wlog.push(a); }
     try { fnGet()(M); } catch (e) { if (e.notModeled) break; throw e; }

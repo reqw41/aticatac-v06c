@@ -274,4 +274,3 @@ reset_sprites:	ld		a, state_dead
 				ld		(C_sprite3 + spr_counter), a
 				ret
 
-update_boss:	ret								; TODO boss.asm
