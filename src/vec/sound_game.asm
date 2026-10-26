@@ -37,7 +37,12 @@ last_sfx:		DB		0
 SND_KV			equ		0x10					; квазидиск стр. 0, стековый режим
 ; A = поток SND_* — играть с начала. Запрос подхватывает прерывание (snd_tick): адрес, потом флаг —
 ; запись байта неделима, состояние прерываний не трогается
-snd_play:		add		a, a
+snd_play:		cp		SND_SFX1				; ВИ53: порог громкости и шум — у музыки и эффектов свои
+				ld		hl, VI_THR_SFX
+				jp		nc, sp_sfx
+				ld		hl, VI_THR_MUS | 0x100	; H = 1 — музыка (шум не играть)
+sp_sfx:			ld		(vi_thr), hl
+				add		a, a
 				ld		l, a
 				ld		h, 0
 				ld		de, snd_tab
@@ -77,7 +82,11 @@ sm_vi:			ld		a, 0x70
 				ret
 
 ; есть ли AY: записать и прочитать регистр 2 (без AY порт читается 0xFF)
-ay_detect:		ld		a, 2
+ay_detect:
+	IFDEF NOAY
+				jp		ad_no					; сборка «только ВИ53» (SJFLAGS=-DNOAY)
+	ENDIF
+				ld		a, 2
 				out		(0x15), a
 				ld		a, 0x5a
 				out		(0x14), a
@@ -234,7 +243,34 @@ vu_l:			ld		a, c
 				cp		16
 				jp		c, vu_v
 				ld		a, 15					; огибающая — как громкая
-vu_v:			ld		b, a
+vu_v:			ld		e, a					; громкости у ВИ53 нет: нота звучит, пока громкость не ниже
+				ld		hl, vu_pv				; половины её пика (пик — при росте громкости: новая нота),
+				ld		a, l					; затухающий хвост молчит
+				add		a, c
+				ld		l, a
+				ld		a, h
+				adc		a, 0
+				ld		h, a
+				ld		a, (hl)
+				ld		(hl), e
+				inc		hl
+				inc		hl
+				inc		hl						; -> vu_pk[канал]
+				cp		e
+				jp		nc, vu_nd
+				ld		(hl), e
+vu_nd:			ld		a, (hl)
+				inc		a
+				or		a
+				rra								; (пик + 1) / 2
+				dec		a
+				cp		e
+				jp		nc, vu_next
+				ld		a, e
+				ld		hl, vi_thr				; и не тише порога
+				cp		(hl)
+				jp		c, vu_next
+				ld		b, a
 				ld		a, (snd_st + 7)			; звучит: тон или шум разрешён
 				push	bc
 vu_s:			dec		c
@@ -245,6 +281,12 @@ vu_s1:			pop		bc
 				and		0x09
 				cp		0x09
 				jp		z, vu_next				; оба запрещены
+				cp		0x01
+				jp		nz, vu_tn
+				ld		a, (vi_mus)				; только шум: в музыке не играть
+				or		a
+				jp		nz, vu_next
+vu_tn:
 				ld		a, b
 				or		a
 				jp		z, vu_next
@@ -271,6 +313,38 @@ vu_next:		inc		c
 				ld		a, c
 				cp		3
 				jp		nz, vu_l
+				ld		a, (vu_v1)				; голос держится на своём счётчике: был на втором — туда же
+				or		a
+				jp		z, vu_s2
+				ld		a, (vu_c1)
+				ld		hl, vu_p2
+				cp		(hl)
+				jp		z, vu_sw
+vu_s2:			ld		a, (vu_v2)
+				or		a
+				jp		z, vu_ns
+				ld		a, (vu_c2)
+				ld		hl, vu_p1
+				cp		(hl)
+				jp		nz, vu_ns
+vu_sw:			ld		hl, (vu_v1)				; обмен (громкость, канал) первого и второго
+				ex		de, hl
+				ld		hl, (vu_v2)
+				ld		(vu_v1), hl
+				ex		de, hl
+				ld		(vu_v2), hl
+vu_ns:			ld		a, (vu_v1)				; запомнить каналы на счётчиках (0xFF — молчит)
+				or		a
+				ld		a, (vu_c1)
+				jp		nz, vu_k1
+				ld		a, 0xff
+vu_k1:			ld		(vu_p1), a
+				ld		a, (vu_v2)
+				or		a
+				ld		a, (vu_c2)
+				jp		nz, vu_k2
+				ld		a, 0xff
+vu_k2:			ld		(vu_p2), a
 				ld		a, (vu_v1)
 				ld		b, a
 				ld		a, (vu_c1)
@@ -403,10 +477,18 @@ snd_reqf:		DB		0
 snd_ay:			DB		0						; 1 — есть AY
 snd_d1:			DW		0						; делители ВИ53 на счётчиках 1 и 2 (0 — тишина)
 snd_d2:			DW		0
-vu_v1:			DB		0
+VI_THR_MUS		equ		3						; наименьшая громкость на ВИ53: музыка
+VI_THR_SFX		equ		2						; эффекты
+vu_pv:			DS		3						; громкость каналов AY в прошлом кадре
+vu_pk:			DS		3						; пик текущей ноты
+vi_thr:			DB		VI_THR_SFX
+vi_mus:			DB		0						; 1 — музыка: шумовые голоса молчат
+vu_v1:			DB		0						; vu_v1/vu_c1 и vu_v2/vu_c2 — пары (обмен словом)
 vu_c1:			DB		0
 vu_v2:			DB		0
 vu_c2:			DB		0
+vu_p1:			DB		0xff					; канал AY на счётчике 1 / 2 в прошлом кадре
+vu_p2:			DB		0xff
 st_base:		DW		0
 st_start:		DW		0
 st_ssp:			DW		0

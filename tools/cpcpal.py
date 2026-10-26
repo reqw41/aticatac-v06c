@@ -8,6 +8,7 @@ PENS.append(0x40)                  # 16: серый — не перо игры, 
 def rgb(pen):
     return tuple((0, 128, 255)[c] for c in HW[PENS[pen]])
 def vecbyte(pen):
+    if pen == 16: return 0xB6                         # серый слота Вектора — светлый (R6 G6 B2), 26.10
     r, g, b = HW[PENS[pen]]
     return ((0, 2, 3)[b] << 6) | ((0, 4, 7)[g] << 3) | (0, 4, 7)[r]
 def mode0(b):  # байт Mode 0 -> (левый, правый) номер пера
