@@ -3,6 +3,8 @@
 
 start:			di
 				ld		sp, 0x4000
+				call	ay_detect
+				call	snd_mute
 				ld		a, 0xff
 				out		(0x03), a
 				call	set_palette
@@ -18,6 +20,7 @@ start:			di
 	ENDIF
 				jp		menu
 new_game:		di
+				call	snd_stop				; в игре музыки нет (NoMusic CPC), только эффекты
 				call	hero_setup
 	IFDEF DEBUGB
 				ld		a, 6
@@ -212,6 +215,12 @@ apply_events:	ld		a, (ev_end)
 				or		a
 				jp		z, ae_0
 				call	erase_all
+				ld		a, (C_game_over)		; мелодия: победа (4) или конец игры (2)
+				cp		game_completed
+				ld		a, SND_DONE
+				jp		z, ae_tune
+				ld		a, SND_OVER
+ae_tune:		call	snd_play
 				call	end_draw
 				call	forget_all
 				call	ev_reset
@@ -356,6 +365,13 @@ isr:			push	af
 				inc		a
 				ld		(frames), a
 				call	kbd_scan				; клавиатура — в гашении
+				push	bc
+				push	de
+				push	hl
+				call	snd_tick				; кадр звука
+				pop		hl
+				pop		de
+				pop		bc
 				pop		af
 				ei
 				ret

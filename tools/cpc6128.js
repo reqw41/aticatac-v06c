@@ -118,7 +118,7 @@ class CPC6128 {
     if (hi === 0xbc) { this.crtcReg = v & 0x1f; return; }
     if (hi === 0xbd) { if (this.crtcReg < 18) this.crtc[this.crtcReg] = v; return; }
     if ((p & 0x0800) === 0) {
-      if (hi === 0xf4) { this.psgBus = v; return; }
+      if (hi === 0xf4) { this.psgBus = v; if (this.psgCtl === 3) this.psgReg = v & 15; return; }   // режим выбора держится — AY перехватывает номер (приём Madram, PlayerAkg)
       if (hi === 0xf6) {
         this.kbRow = v & 0x0f;
         this.psgCtl = (v >> 6) & 3;

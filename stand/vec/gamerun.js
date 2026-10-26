@@ -62,11 +62,12 @@ for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json
 let pcPrev = 0; const wPrev = {}; let lastDg = 0, lastDgT = 0; const lostAt = {}, deferN = {}, lpc = {}; let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
 const streak = [0,0,0,0,0,0], maxStreak = [0,0,0,0,0,0], maxAt = [0,0,0,0,0,0];
 let mtl = 0, seqFL = ''; const seqF = [];
+const viLog = [], viB = [[], [], []]; const sndOut = {}, ayShadow = new Array(14).fill(0), ayLog = []; let ayReg = 0;
 const fnAt = {}, fnOpen = {}, fnSum = {}, fnHist = {}, loopH = [], loopH2 = []; let loopT0 = 0, loopRoom = false, loopFn = {};
 for (const n of ['wait_frame', 'logic_step', 'collect_events', 'apply_events', 'render_sprites', 'panel_update']) if (S[n] !== undefined) fnAt[S[n]] = n;
 while (frames < N) {
   if (frc >= 59904) {
-    frc -= 59904; frames++; irqUntil = +(process.env.IRQW || 64);          // как на железе и в Emu80: под DI прерывание теряется
+    frc -= 59904; frames++; if (process.env.SNDLOG) ayLog.push(ayShadow.slice()); irqUntil = +(process.env.IRQW || 64);          // как на железе и в Emu80: под DI прерывание теряется
     for (const x of (process.env.POKE || '').split(',').filter(Boolean)) { const [f, av] = x.split(':'); const [a, v] = av.split('='); if (+f === frames) memory.bytes[memory.tobank(S[a] !== undefined ? S[a] : +a)] = +v; }
     for (const [f, ks] of plan) if (f === frames) { keyboard.matrix.fill(0); for (const k of ks) { const [r, b] = KEYS[k]; keyboard.matrix[r] |= b; } }
     if (frames % (+process.env.SHOTN || 50) === 0) {
@@ -129,7 +130,7 @@ while (frames < N) {
   const c = (cpu.instruction(), cpu.vcycles); frc += c; total += c; tacc += c;
   if (process.env.PROF && (!process.env.PROFR || (process.env.PROFR === '1' ? fnOpen[S.render_sprites] : upd))) { let n = profCache.get(pc0); if (!n) { n = nmOf(pc0).split('+')[0]; profCache.set(pc0, n); } prof[n] = (prof[n] || 0) + c; }
   if (tacc > 1) { const tn = tacc >> 1; tacc -= tn * 2; timer.Count(tn); }
-  if (cpu.last_opcode === 0xd3) io.commit();
+  if (cpu.last_opcode === 0xd3) { if (process.env.SNDT) { const port = memory.bytes[memory.tobank((cpu.pc - 1) & 0xffff)]; sndOut[port] = (sndOut[port] || 0) + 1; if (port === 0x15) ayReg = cpu.a() & 15; else if (port === 0x14) ayShadow[ayReg] = cpu.a(); else if (port === 0x0A || port === 0x09) { const k = port === 0x0A ? 1 : 2; viB[k].push(cpu.a()); if (viB[k].length === 2) { viLog.push([frames, k, viB[k][0] | viB[k][1] << 8]); viB[k] = []; } } else if (port === 8) { const v = cpu.a(); if ((v & 0xc0) === 0x40 || (v & 0xc0) === 0x80) { const k = v >> 6; viB[k] = []; if ((v & 0x0e) === 0) viLog.push([frames, k, 0]); } } } io.commit(); }
 }
 if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, +process.env.PROFN || 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
 if (process.env.LOOPST) {
@@ -150,6 +151,9 @@ console.log('потеряны в', JSON.stringify(lostAt));
 console.log(`прерываний: дошло ${irqOk}, потеряно ${irqLost}; игра заметила потерянных ${rd(S.lost_frames) | rd(S.lost_frames + 1) << 8}`);
 if (process.env.LONGPC) console.log('метки', JSON.stringify(Object.entries(lpc).sort((a, b) => b[1] - a[1]).slice(0, 25)));
 console.log('подряд отложен (макс, кадр)', maxStreak.map((v, i) => v + '@' + maxAt[i]).join(' '));
+if (process.env.SNDLOG) fs.writeFileSync(process.env.SNDLOG, JSON.stringify(ayLog));
+if (process.env.VILOG) fs.writeFileSync(process.env.VILOG, JSON.stringify(viLog));
+if (process.env.SNDT) console.log('звук: записей в порты', JSON.stringify(Object.fromEntries(Object.entries(sndOut).filter(([p]) => [8,9,10,0x14,0x15].includes(+p)))), 'AY найден', rd(S.snd_ay));
 console.log('отложено бюджетом по объектам', JSON.stringify(deferN));
 console.log(`выводов картинки ${nRend} (${(nRend / frames * 50).toFixed(1)} в с)`);
 console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);

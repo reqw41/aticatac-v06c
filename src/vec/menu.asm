@@ -9,7 +9,7 @@ CHAR_MID		equ		40
 CHAR_RIGHT		equ		60
 CHAR_GAP		equ		20
 CHAR_Y			equ		0x7a					; character_select_y
-MN_START		equ		50						; кадров от огня до игры (CPC — 175, мелодия старта)
+MN_START		equ		175						; кадров от огня до игры (start_the_game CPC — мелодия старта)
 
 menu:			di
 				ld		sp, 0x4000
@@ -26,6 +26,8 @@ mn_bg0:			ld		(hl), 0
 				or		c
 				jp		nz, mn_bg0
 				call	forget_all
+				ld		a, SND_MENU
+				call	snd_play
 				xor		a
 				ld		(C_menu_state), a
 				ld		(ml_pend), a
@@ -52,6 +54,8 @@ mn_loop:		call	wait_frame
 				jp		z, mn_draw
 				ld		a, MN_START
 				ld		(C_menu_state), a
+				ld		a, SND_START
+				call	snd_play
 mn_draw:		call	mn_heroes
 				call	render_objs
 				jp		mn_loop

@@ -340,7 +340,7 @@ for k in range(NPL):
                 if (SLOT[mrows[y][c * 8 + j]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
             menu_blob.append(v)
 MENU_ADDR = 0x8000                                  # квазидиск стр. 0 (спрайты — стр. 3, 0..0x7FFF стр. 0 — запас)
-assert not kv.data[0] or len(kv.data[0]) <= 0x8000
+assert not kv.data[0], 'спрайты вышли в стр. 0 — там звук (0x0000..) и меню (0x8000..)'
 # жизни на панели — фигурки выбранного героя: строки LIVES_Y0..+LIVES_N столбцов 24..31 для рыцаря, мага,
 # серва (снимки tools/cpcpanel.js), после фона меню; panel_init накладывает по hero
 LIVES_Y0, LIVES_N = 120, 28

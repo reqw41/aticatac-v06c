@@ -42,13 +42,15 @@ function record(m, n, stopSilent) {
   m.psgLog = null;
   return frames;
 }
-// повтор: наименьший период p, начиная с t0, при котором кадры совпадают на 2 периода
+// повтор: наименьший период p (от 64 кадров), начиная с t0, при котором полные состояния регистров
+// (R7 без битов портов) совпадают на всём остатке записи
 function findLoop(frames) {
-  const key = frames.map((f) => JSON.stringify(f));
-  for (let t0 = 0; t0 < key.length / 3; t0 += 1)
-    for (let p = 16; t0 + 2 * p <= key.length; p++) {
+  const r = new Array(14).fill(0);
+  const key = frames.map((f) => { for (const [k, v] of f) r[k] = v; const q = r.slice(); q[7] &= 0x3f; return q.join(','); });
+  for (let t0 = 0; t0 < key.length / 2; t0 += 1)
+    for (let p = 64; t0 + p + 1000 <= key.length; p++) {         // совпадение — на всём остатке, не короче 1000 кадров
       let ok = true;
-      for (let i = 0; i < p && ok; i++) if (key[t0 + i] !== key[t0 + p + i] || key[t0 + i] !== key[t0 + 2 * p + i - p]) ok = false;
+      for (let i = t0; i + p < key.length && ok; i++) if (key[i] !== key[i + p]) ok = false;
       if (ok) return { start: t0, len: p };
     }
   return null;
@@ -57,7 +59,7 @@ function findLoop(frames) {
 fs.mkdirSync(OUT, { recursive: true });
 const out = { tunes: {}, sfx: [] };
 // мелодии: машина в меню (музыка меню уже идёт), затем init_sound_system(hl = atic_Start, d = песня)
-for (const [name, song, n] of [['menu', 0, 6000], ['start', 1, 175], ['over', 2, 1500], ['done', 4, 1500]]) {
+for (const [name, song, n] of [['menu', 0, 9000], ['start', 1, 175], ['over', 2, 1500], ['done', 4, 1500]]) {
   const m = new CPC(path.join(__dirname, '../build/cpcnew'));
   m.runFrames(60);
   m.runUntilPc(S.menu_tasks, CPC.T_FRAME * 10);
@@ -72,7 +74,7 @@ for (const [name, song, n] of [['menu', 0, 6000], ['start', 1, 175], ['over', 2,
 // эффекты: игра (рыцарь), на каждом эффекте — своя машина
 for (let e = 1; e <= 12; e++) {
   const { m } = scenario.start({ menu: [{ frames: 150, keys: [] }, { frames: 10, keys: ['SPACE'] }, { frames: 5, keys: [] }], ticks: 1, steps: [{ ticks: 1, keys: [] }] });
-  m.runFrames(5);
+  m.runFrames(250);                               // после звука появления героя
   m.runUntilPc(S.current_game_state, CPC.T_FRAME * 10);
   m.poke(S.sound_guard, 0);
   call(m, S.play_sfx, { e });
