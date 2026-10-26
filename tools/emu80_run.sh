@@ -11,4 +11,4 @@ cp "$ROOT/build/game/aticatac.r0m" "$ROOT/build/game/aticatac.edd" "$TMP/"
 printf 'ramDisk.fileName = "%s"\n' "$TMP/aticatac.edd" > "$TMP/post.conf"
 cd "$APP"
 nohup ./Emu80qt --platform vector --post-conf "$TMP/post.conf" --run "$TMP/aticatac.r0m" >"$TMP/emu80.log" 2>&1 &
-echo "Emu80 запущен: стрелки, пробел — огонь, Z — взять/бросить"
+echo "Emu80 запущен: стрелки, пробел — огонь, Z или Я — взять/бросить, в меню F1+F3 — god mode"

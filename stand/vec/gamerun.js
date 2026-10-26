@@ -42,7 +42,7 @@ memory.write = function (addr, v, st) {
   return mw(addr, v, st);
 };
 const beamRow = () => { const l = Math.floor(frc / 192) - 40; return l >= 0 && l < 256 ? 255 - l : -1; };
-const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] , f1: [1, 0x08], f3: [1, 0x20] };
+const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] , f1: [1, 0x08], f3: [1, 0x20] , q: [6, 0x02] };
 const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
 // меню (src/vec/menu.asm): по умолчанию огонь на 40-м кадре — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
 for (const x of (process.env.MENU || '40:space,44:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
@@ -154,7 +154,7 @@ console.log('подряд отложен (макс, кадр)', maxStreak.map((v
 if (process.env.SNDLOG) fs.writeFileSync(process.env.SNDLOG, JSON.stringify(ayLog));
 if (process.env.VILOG) fs.writeFileSync(process.env.VILOG, JSON.stringify(viLog));
 if (process.env.SNDT) console.log('звук: записей в порты', JSON.stringify(Object.fromEntries(Object.entries(sndOut).filter(([p]) => [8,9,10,0x14,0x15].includes(+p)))), 'AY найден', rd(S.snd_ay));
-console.log('здоровье', rd(S.C_health), 'жизней', rd(S.C_num_lives), 'god', rd(S.god));
+console.log('здоровье', rd(S.C_health), 'жизней', rd(S.C_num_lives), 'god', rd(S.god), 'keys_pressed', rd(S.C_keys_pressed).toString(2), 'keys_fire2', rd(S.C_keys_fire2));
 console.log('отложено бюджетом по объектам', JSON.stringify(deferN));
 console.log(`выводов картинки ${nRend} (${(nRend / frames * 50).toFixed(1)} в с)`);
 console.log(`кадров ${frames}, шагов ${loops} (${(loops / frames * 50).toFixed(1)} в с), шаг: медиана ${tickT[tickT.length >> 1]} тактов, 90% ${tickT[Math.floor(tickT.length * 0.9)]}, макс ${tickT[tickT.length - 1]}`);
