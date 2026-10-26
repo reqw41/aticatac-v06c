@@ -19,6 +19,8 @@ start:			di
 				ld		a, 10
 				call	dbg_border	; этап	; этап
 	ENDIF
+				ei
+				call	splash					; только при включении
 				jp		menu
 new_game:		di
 				call	snd_stop				; в игре музыки нет (NoMusic CPC), только эффекты

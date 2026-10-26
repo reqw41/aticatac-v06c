@@ -11,6 +11,7 @@ node tools/cpcmenu.js >/dev/null
 python3 -I tools/mkgame.py build/game
 python3 -I tools/akgflat.py >/dev/null
 python3 -I tools/mkakg.py >/dev/null
+python3 -I tools/mksplash.py build/game
 [ -f build/l80/holes.json ] || node tools/holes.js build/golden/*.json.gz
 python3 - <<'PY'
 import json
@@ -37,6 +38,10 @@ pa = int(re.search(r'PANEL_ADDR\tequ 0x([0-9A-F]+)', open('build/game/sprites.in
 put(2, pa, 'build/game/panel_kv.bin')
 put(0, 0x0000, 'build/game/menu_kv.bin')
 put(0, 0xA000, 'build/sound/akg/akg_kv.bin')
+assert len(open('build/game/menu_kv.bin', 'rb').read()) <= 0x5C00                 # заставка: стр. 0 (tools/mksplash.py)
+assert 0xA000 + len(open('build/sound/akg/akg_kv.bin', 'rb').read()) <= 0xCC00
+put(0, 0x5C00, 'build/game/splash01_kv.bin')
+put(0, 0xCC00, 'build/game/splash2_kv.bin')
 assert len(open('build/room/items2.bin', 'rb').read()) <= 0xA300
 open('build/game/aticatac.edd', 'wb').write(edd)
 print('aticatac.edd: 256 КБ')

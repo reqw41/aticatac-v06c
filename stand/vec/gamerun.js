@@ -44,8 +44,8 @@ memory.write = function (addr, v, st) {
 const beamRow = () => { const l = Math.floor(frc / 192) - 40; return l >= 0 && l < 256 ? 255 - l : -1; };
 const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] , f1: [1, 0x08], f3: [1, 0x20] , q: [6, 0x02] };
 const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
-// меню (src/vec/menu.asm): по умолчанию огонь на 40-м кадре — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
-for (const x of (process.env.MENU || '40:space,44:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
+// меню (src/vec/menu.asm): по умолчанию огонь на 40-м кадре (заставка) и на 90-м (меню) — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
+for (const x of (process.env.MENU || '40:space,44:,90:space,94:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
 fs.mkdirSync(OUTDIR, { recursive: true });
 let frc = 0, frames = 0, tacc = 0, total = 0;
 const N = +NF;
