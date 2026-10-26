@@ -47,4 +47,5 @@ open('build/game/aticatac.edd', 'wb').write(edd)
 print('aticatac.edd: 256 КБ')
 PY
 cp build/game/aticatac.rom build/game/aticatac.r0m
+python3 -I tools/build_fdd.py
 ls -la build/game/aticatac.r0m build/game/aticatac.edd

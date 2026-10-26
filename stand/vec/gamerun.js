@@ -33,8 +33,18 @@ cpu.pc = 0; cpu.sp = 0; cpu.iff = false;
 const rd = a => memory.bytes[memory.tobank(a & 0xffff)];
 const rw = a => rd(a) | rd(a + 1) << 8;
 
-const edd = fs.readFileSync(ROOTD + '/build/game/aticatac.edd');
-for (let p = 0; p < 4; p++) for (let a = 0; a < 0x10000; a++) memory.bytes[memory.tobank(((p + 1) << 16) + a)] = edd[p * 0x10000 + a];
+if (process.env.FDD) {
+  // загрузка с дискеты (tools/build_fdd.py): как штатное ПЗУ — начало дискеты по 0x0080 (байт 4 дескриптора — КБ),
+  // вход 0x0100; память и квазидиск пустые, остальное загрузчик читает через ВГ93
+  const img = new Uint8Array(fs.readFileSync(process.env.FDD));
+  for (let a = 0; a < 0x10000; a++) memory.bytes[memory.tobank(a)] = 0;
+  for (let i = 0; i < img[4] * 1024; i++) memory.bytes[memory.tobank(0x80 + i)] = img[i];
+  floppy.loadDsk(0, 'a.fdd', img);
+  cpu.pc = 0x100;
+} else {
+  const edd = fs.readFileSync(ROOTD + '/build/game/aticatac.edd');
+  for (let p = 0; p < 4; p++) for (let a = 0; a < 0x10000; a++) memory.bytes[memory.tobank(((p + 1) << 16) + a)] = edd[p * 0x10000 + a];
+}
 let upd = null, updN = 0, updTear = 0, updDepth = 0;
 const mw = memory.write.bind(memory);
 memory.write = function (addr, v, st) {
@@ -61,7 +71,7 @@ const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
 let pcPrev = 0; const wPrev = {}; let lastDg = 0, lastDgT = 0; const lostAt = {}, deferN = {}, lpc = {}; let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
 const streak = [0,0,0,0,0,0], maxStreak = [0,0,0,0,0,0], maxAt = [0,0,0,0,0,0];
-let dumped = false; let mtl = 0, seqFL = ''; const seqF = [];
+let startSeen = false; const trapH = []; let dumped = false; let mtl = 0, seqFL = ''; const seqF = [];
 const viLog = [], viB = [[], [], []]; const sndOut = {}, ayShadow = new Array(14).fill(0), ayLog = []; let ayReg = 0;
 const fnAt = {}, fnOpen = {}, fnSum = {}, fnHist = {}, loopH = [], loopH2 = []; let loopT0 = 0, loopRoom = false, loopFn = {};
 for (const n of ['wait_frame', 'logic_step', 'collect_events', 'apply_events', 'render_sprites', 'panel_update']) if (S[n] !== undefined) fnAt[S[n]] = n;
@@ -109,10 +119,19 @@ while (frames < N) {
   if (process.env.WATCH) { for (const o of [3, 5]) { const v = rd(S.objs + o * 32); if (v !== wPrev[o]) { if (frames > 280 && frames < 300) console.log('объект', o, 'нарисован', wPrev[o], '->', v, 'кадр', frames, 'pc', nmOf(pcPrev), 'sp', cpu.sp.toString(16)); wPrev[o] = v; } } pcPrev = cpu.pc; }
   if (process.env.LONGLOOP && (cpu.pc === S.add_to_score || cpu.pc === S.kill_sprite)) console.log(cpu.pc === S.kill_sprite ? 'УБИТ кадр' : 'ОЧКИ кадр', frames);
   if (cpu.pc === S.render_sprites) { for (let o = 0; o < 6; o++) { const l = rd(S.objs + o * 32 + 16); streak[o] = l ? streak[o] + 1 : 0; if (process.env.STRK && o === 5 && streak[o] > 3 && streak[o] < 12) console.log('объект 5 кадр', frames, 'late', l, 'obj', [...Array(16).keys()].map((i) => rd(S.objs + 160 + i)).join(','), 'pc', nmOf(cpu.pc)); if (streak[o] > maxStreak[o]) { maxStreak[o] = streak[o]; maxAt[o] = frames; } } }
+  if (process.env.MTRACE && cpu.pc === S.start && !startSeen) { startSeen = true; console.log('СТАРТ ИГРЫ кадр', frames);
+    if (process.env.FDD) {
+      const rom = fs.readFileSync(ROM), ed = fs.readFileSync(ROOTD + '/build/game/aticatac.edd');
+      let br = 0, bk = 0;
+      for (let a = 0; a < 0x10000; a++) if ((a < 0x8000 || a >= 0xe000) && !(a >= 0x3f00 && a < 0x4000) && rd(a) !== rom[a]) br++;
+      for (let p = 0; p < 4; p++) for (let a = 0; a < 0x10000; a++) { if (p === 3 && a >= 0xe000) continue; if (memory.bytes[memory.tobank(((p + 1) << 16) + a)] !== ed[p * 0x10000 + a]) bk++; }
+      console.log('с дискеты: отличий ОЗУ (0..7FFF, E000..FFFF, кроме стека 3F00) ' + br + ', квазидиска ' + bk);
+    } }
   if (process.env.MTRACE && (cpu.pc === S.menu || cpu.pc === S.new_game || cpu.pc === S.mn_loop && !mtl || cpu.pc === S.mn_starting)) { if (cpu.pc === S.mn_loop) mtl = 1; if (cpu.pc === S.menu) mtl = 0; console.log('МЕНЮ', nmOf(cpu.pc), 'кадр', frames, 'keys', rd(S.C_keys_pressed), 'state', rd(S.C_menu_state)); }
   if (process.env.SEQF && frames >= +process.env.SEQF && seqF.length < 80) { const n = nmOf(cpu.pc).split('+')[0]; if (n !== seqFL) { seqF.push(n); seqFL = n; } if (seqF.length === 80) console.log('ПУТЬ', seqF.join(' ')); }
   if (process.env.KDBG && cpu.pc === S.mn_loop && frames >= 145 && frames <= 400 && frames % 20 === 0) console.log('mn_loop кадр', frames, 'row7', rd(S.kb_row7), 'keys', rd(S.C_keys_pressed), 'state', rd(S.C_menu_state));
   if (process.env.DUMPKV && frames === +process.env.DUMPKV && !dumped) { dumped = true; const b = Buffer.alloc(0x4000); for (let a = 0; a < 0x4000; a++) b[a] = memory.bytes[memory.tobank(0xa000 + a + 0x10000)]; fs.writeFileSync(process.env.DUMPKVF, b); }
+  if (process.env.TRAPLO) { trapH.push(cpu.pc.toString(16) + '/' + cpu.sp.toString(16)); if (trapH.length > 40) trapH.shift(); if (cpu.pc >= +process.env.TRAPLO && cpu.pc < +process.env.TRAPHI) { console.log('ЛОВУШКА кадр', frames, trapH.join(' ')); process.exit(1); } }
   if (cpu.pc === S.render_sprites) nRend++;
   if (cpu.pc === S.di_guard) { lastDg = frc; lastDgT = total; }
   if (process.env.LONGPC && frames >= +process.env.LONGPC && frames < +process.env.LONGPC + 4) { const n = nmOf(cpu.pc).split('+')[0]; lpc[n] = (lpc[n] || 0) + 1; }
