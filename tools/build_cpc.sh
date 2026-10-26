@@ -4,10 +4,12 @@
 # rasm: tools/rasm (собран из tools/src/rasm: make -f makefile.MacOS CC=/usr/bin/clang ARCH="-arch arm64").
 set -e
 cd "$(dirname "$0")/.."
+mkdir -p build
 RASM=${RASM:-$PWD/tools/rasm}
 rm -rf build/cpcsrc build/cpcnew && cp -R ref/cpc build/cpcsrc
-find build/cpcsrc -name '*.asm' -print0 | xargs -0 sed -i '' -E \
+find build/cpcsrc -name '*.asm' -print0 | xargs -0 sed -i.bak -E \
   's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_.{}]*):([[:space:]]+[Ee][Qq][Uu])/\1\2/'
+find build/cpcsrc -name '*.asm.bak' -delete
 (cd build/cpcsrc && rm -f aticatac.dsk && "$RASM" atic.asm -s -sl -sq >/dev/null && "$RASM" loader.asm >/dev/null)
 python3 -I tools/dskextract.py build/cpcsrc/aticatac.dsk build/cpcnew >/dev/null
 python3 -I tools/dskextract.py ref/cpc/aticatac.dsk build/cpc >/dev/null

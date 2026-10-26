@@ -1,8 +1,10 @@
 #!/bin/bash
 # Сборка игры для Вектора: build/game/aticatac.rom (64 КБ с 0x0000) + build/game/aticatac.edd (квазидиск).
-#   tools/build_game.sh            (holes.json берётся готовый; пересчёт — node tools/holes.js build/golden/*.json.gz)
+#   tools/build_game.sh            (после tools/build_cpc.sh; holes.json — data/holes.json, пересчёт: эталоны
+#   node tools/cpc_trace.js research/scenarios/*.json, затем node tools/holes.js build/golden/*.json.gz)
 set -e
 cd "$(dirname "$0")/.."
+mkdir -p build/game build/room build/l80 build/sound
 python3 -I tools/mk80sym.py >/dev/null
 python3 -I tools/mk80data.py >/dev/null
 python3 -I tools/mkroom.py build/room >/dev/null
@@ -12,7 +14,7 @@ python3 -I tools/mkgame.py build/game
 python3 -I tools/akgflat.py >/dev/null
 python3 -I tools/mkakg.py >/dev/null
 python3 -I tools/mksplash.py build/game
-[ -f build/l80/holes.json ] || node tools/holes.js build/golden/*.json.gz
+[ -f build/l80/holes.json ] || cp data/holes.json build/l80/holes.json
 python3 - <<'PY'
 import json
 p = json.load(open('build/game/patch.json'))

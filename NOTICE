@@ -1,0 +1,17 @@
+Atic Atac -> Vector-06C
+Port by Boris Likhachev, 2026.
+
+Atic Atac (c) 1983 Ultimate Play the Game. This is a port of the Amstrad CPC 6128
+version by John Ward (graphics Steven Day, sound Saul Cross):
+https://github.com/shaymanjohn/aticatac-cpc
+That repository has no licence; all rights to it belong to its authors. The game
+logic of this port is translated from its Z80 source to Intel 8080 (src/model,
+src/i8080); graphics, rooms, music, sound effects and the loading screen are
+converted from it by the tools in tools/. The original sources are not included
+here (ref/ is not part of the repository). This is a non-commercial fan port; it
+will be taken down on request of the rights holders.
+
+Third-party code:
+- tools/vendor/Z80.js - Z80 emulator by Molly Howell, MIT License.
+- src/vec/akg80.tpl - the Arkos Tracker 2 AKG player by Julien Nevo, MIT License,
+  rewritten for Intel 8080.
