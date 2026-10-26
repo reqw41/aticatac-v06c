@@ -26,7 +26,7 @@ ZX = load()
 
 def bits(name):
     d = ZX[name]; h = d[0]; wb = (len(d) - 1) // h
-    b = [[(d[1 + y * wb + x // 8] >> (7 - x % 8)) & 1 for x in range(wb * 8)] for y in range(h)]
+    b = [[(d[1 + y * wb + x // 8] >> (7 - x % 8)) & 1 for x in range(wb * 8)] for y in range(h)][::-1]   # ZX хранит снизу вверх
     ys = [y for y in range(h) if any(b[y])]; xs = [x for x in range(wb * 8) if any(b[y][x] for y in range(h))]
     return [r[xs[0]:xs[-1] + 1] for r in b[ys[0]:ys[-1] + 1]]
 
@@ -87,4 +87,32 @@ def colorize(rows, cands):
                     c = [cp(X + i, Y + j) for i in range(-r, r + 1) for j in range(-r, r + 1) if cp(X + i, Y + j)]
                     if c: p = collections.Counter(c).most_common(1)[0][0]; break
             out[Y][X] = p or common
+    if FILL:                                          # дыры внутри формы ZX — цветом CPC под ними (чёрное CPC остаётся)
+        zm = [[0] * W for _ in range(H)]
+        for y in range(h):
+            for x in range(w):
+                if zb[y][x]: zm[y + dy][x + dx] = 1
+        for Y, X in holes(zm):
+            p = cp(X, Y)
+            if p: out[Y][X] = p
     return out, name
+
+FILL = os.environ.get('ZXFILL', '1') != '0'
+def holes(m, r=3):
+    """пустые точки внутри маски m: замкнутые (заливка от рамки по 4 соседям не доходит) или с точками маски не
+    дальше r и слева, и справа, и сверху, и снизу"""
+    H, W = len(m), len(m[0])
+    out = set(); st = [(x, y) for x in range(W) for y in (0, H - 1)] + [(x, y) for y in range(H) for x in (0, W - 1)]
+    while st:
+        x, y = st.pop()
+        if not (0 <= x < W and 0 <= y < H) or (x, y) in out or m[y][x]: continue
+        out.add((x, y)); st += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    on = lambda x, y: 0 <= x < W and 0 <= y < H and m[y][x]
+    res = []
+    for y in range(H):
+        for x in range(W):
+            if m[y][x]: continue
+            if (x, y) not in out or (any(on(x - i, y) for i in range(1, r + 1)) and any(on(x + i, y) for i in range(1, r + 1))
+                                     and any(on(x, y - i) for i in range(1, r + 1)) and any(on(x, y + i) for i in range(1, r + 1))):
+                res.append((y, x))
+    return res
