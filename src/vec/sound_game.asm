@@ -58,7 +58,8 @@ snd_req_hl:		ld		(snd_req), hl
 ; тишина (поток остановлен)
 snd_stop:		ld		hl, 0
 				jp		snd_req_hl
-; заглушить: AY — громкости 0; ВИ53 — счётчики 1 и 2 в режим 0 без счёта (выход низкий)
+; заглушить: AY — громкости 0; ВИ53 — счётчики 1 и 2 в режиме 3 с делителем 2 (750 кГц не слышно, а средний
+; уровень тот же, что у ноты: без скачка-щелчка; режим 3 дальше не меняется — пишется только делитель)
 snd_mute:		ld		a, (snd_ay)
 				or		a
 				jp		z, sm_vi
@@ -72,10 +73,18 @@ sm_l:			ld		a, b
 				cp		11
 				jp		nz, sm_l
 				ret
-sm_vi:			ld		a, 0x70
+sm_vi:			ld		a, 0x76
 				out		(0x08), a
-				ld		a, 0xb0
+				ld		a, 2
+				out		(0x0A), a
+				xor		a
+				out		(0x0A), a
+				ld		a, 0xb6
 				out		(0x08), a
+				ld		a, 2
+				out		(0x09), a
+				xor		a
+				out		(0x09), a
 				ld		hl, 0
 				ld		(snd_d1), hl
 				ld		(snd_d2), hl
@@ -441,10 +450,8 @@ vu_set:			ex		de, hl					; DE = делитель, HL = управляющее/п
 vu_new:			ld		(hl), e
 				inc		hl
 				ld		(hl), d
-				pop		hl						; H = порт, L = управляющее слово
-				ld		a, l
-				out		(0x08), a
-				ld		a, h
+				pop		hl						; H = порт (режим 3 уже стоит — только делитель)
+vu_out:			ld		a, h
 				cp		0x0A
 				ld		a, e
 				jp		nz, vu_p9
@@ -458,7 +465,7 @@ vu_p9:			out		(0x09), a
 				ret
 vu_same:		pop		hl
 				ret
-vu_off:			pop		hl						; тишина: режим 0 без счёта
+vu_off:			pop		hl						; тишина: делитель 2 (см. snd_mute)
 				ld		a, (hl)
 				inc		hl
 				or		(hl)
@@ -466,10 +473,12 @@ vu_off:			pop		hl						; тишина: режим 0 без счёта
 				ld		(hl), 0
 				dec		hl
 				ld		(hl), 0
-				ld		a, e
-				and		0xf0
-				out		(0x08), a
-				ret
+				ld		e, 2
+				ld		a, d
+				ld		d, 0
+				ld		h, a
+				jp		vu_out
+
 
 snd_ptr:		DW		0						; следующий кадр потока в квазидиске (0 — тишина)
 snd_req:		DW		0						; запрос из основного кода (snd_play / snd_stop)
