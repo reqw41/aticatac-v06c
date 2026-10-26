@@ -20,7 +20,9 @@ start:			di
 				call	dbg_border	; этап	; этап
 	ENDIF
 				ei
-				call	splash					; только при включении
+	IFNDEF ECHK
+				call	splash					; только при включении (в сборке ECHK нет — память)
+	ENDIF
 				jp		menu
 new_game:		di
 				call	snd_stop				; в игре музыки нет (NoMusic CPC), только эффекты
@@ -576,7 +578,10 @@ update_clock:	ld		a, 1
 				ret
 
 ; ---- экран и палитра ----
-clear_screen:	ld		hl, 0
+; очистка трёх плоскостей записью через SP — под DI (прерывание писало бы в экран, а при окне квазидиска
+; в обработчике — в код плеера звука); прерывания остаются запрещены
+clear_screen:	di
+				ld		hl, 0
 				add		hl, sp
 				ld		(clr_ssp), hl
 				ld		hl, 0xE000				; 3 плоскости; в 0xE000.. — код

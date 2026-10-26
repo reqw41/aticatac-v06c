@@ -44,8 +44,8 @@ memory.write = function (addr, v, st) {
 const beamRow = () => { const l = Math.floor(frc / 192) - 40; return l >= 0 && l < 256 ? 255 - l : -1; };
 const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] , f1: [1, 0x08], f3: [1, 0x20] , q: [6, 0x02] };
 const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
-// меню (src/vec/menu.asm): по умолчанию огонь на 40-м кадре (заставка) и на 90-м (меню) — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
-for (const x of (process.env.MENU || '40:space,44:,90:space,94:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
+// меню (src/vec/menu.asm): по умолчанию пробел на 100-м кадре (заставка, после полоски) и огонь на 150-м (меню) — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
+for (const x of (process.env.MENU || '100:space,104:,150:space,154:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
 fs.mkdirSync(OUTDIR, { recursive: true });
 let frc = 0, frames = 0, tacc = 0, total = 0;
 const N = +NF;
@@ -61,7 +61,7 @@ const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
 let pcPrev = 0; const wPrev = {}; let lastDg = 0, lastDgT = 0; const lostAt = {}, deferN = {}, lpc = {}; let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
 const streak = [0,0,0,0,0,0], maxStreak = [0,0,0,0,0,0], maxAt = [0,0,0,0,0,0];
-let mtl = 0, seqFL = ''; const seqF = [];
+let dumped = false; let mtl = 0, seqFL = ''; const seqF = [];
 const viLog = [], viB = [[], [], []]; const sndOut = {}, ayShadow = new Array(14).fill(0), ayLog = []; let ayReg = 0;
 const fnAt = {}, fnOpen = {}, fnSum = {}, fnHist = {}, loopH = [], loopH2 = []; let loopT0 = 0, loopRoom = false, loopFn = {};
 for (const n of ['wait_frame', 'logic_step', 'collect_events', 'apply_events', 'render_sprites', 'panel_update']) if (S[n] !== undefined) fnAt[S[n]] = n;
@@ -111,6 +111,8 @@ while (frames < N) {
   if (cpu.pc === S.render_sprites) { for (let o = 0; o < 6; o++) { const l = rd(S.objs + o * 32 + 16); streak[o] = l ? streak[o] + 1 : 0; if (process.env.STRK && o === 5 && streak[o] > 3 && streak[o] < 12) console.log('объект 5 кадр', frames, 'late', l, 'obj', [...Array(16).keys()].map((i) => rd(S.objs + 160 + i)).join(','), 'pc', nmOf(cpu.pc)); if (streak[o] > maxStreak[o]) { maxStreak[o] = streak[o]; maxAt[o] = frames; } } }
   if (process.env.MTRACE && (cpu.pc === S.menu || cpu.pc === S.new_game || cpu.pc === S.mn_loop && !mtl || cpu.pc === S.mn_starting)) { if (cpu.pc === S.mn_loop) mtl = 1; if (cpu.pc === S.menu) mtl = 0; console.log('МЕНЮ', nmOf(cpu.pc), 'кадр', frames, 'keys', rd(S.C_keys_pressed), 'state', rd(S.C_menu_state)); }
   if (process.env.SEQF && frames >= +process.env.SEQF && seqF.length < 80) { const n = nmOf(cpu.pc).split('+')[0]; if (n !== seqFL) { seqF.push(n); seqFL = n; } if (seqF.length === 80) console.log('ПУТЬ', seqF.join(' ')); }
+  if (process.env.KDBG && cpu.pc === S.mn_loop && frames >= 145 && frames <= 400 && frames % 20 === 0) console.log('mn_loop кадр', frames, 'row7', rd(S.kb_row7), 'keys', rd(S.C_keys_pressed), 'state', rd(S.C_menu_state));
+  if (process.env.DUMPKV && frames === +process.env.DUMPKV && !dumped) { dumped = true; const b = Buffer.alloc(0x4000); for (let a = 0; a < 0x4000; a++) b[a] = memory.bytes[memory.tobank(0xa000 + a + 0x10000)]; fs.writeFileSync(process.env.DUMPKVF, b); }
   if (cpu.pc === S.render_sprites) nRend++;
   if (cpu.pc === S.di_guard) { lastDg = frc; lastDgT = total; }
   if (process.env.LONGPC && frames >= +process.env.LONGPC && frames < +process.env.LONGPC + 4) { const n = nmOf(cpu.pc).split('+')[0]; lpc[n] = (lpc[n] || 0) + 1; }
@@ -149,6 +151,7 @@ tickT.sort((a, b) => a - b);
 console.log(`обновлений: замещение на месте ${nRep}, XOR ${nXor}, появление ${nNew}; луч прошёл по строкам объекта во время обновления: ${updTear} из ${updN} (${(updTear / updN * 100).toFixed(1)}%)`);
 console.log('потеряны в', JSON.stringify(lostAt));
 console.log(`прерываний: дошло ${irqOk}, потеряно ${irqLost}; игра заметила потерянных ${rd(S.lost_frames) | rd(S.lost_frames + 1) << 8}`);
+if (process.env.SEQF && seqF.length) console.log('ПУТЬ(неполный)', seqF.join(' '));
 if (process.env.LONGPC) console.log('метки', JSON.stringify(Object.entries(lpc).sort((a, b) => b[1] - a[1]).slice(0, 25)));
 console.log('подряд отложен (макс, кадр)', maxStreak.map((v, i) => v + '@' + maxAt[i]).join(' '));
 if (process.env.SNDLOG) fs.writeFileSync(process.env.SNDLOG, JSON.stringify(ayLog));
