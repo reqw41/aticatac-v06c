@@ -20,7 +20,10 @@ OB_C1			equ		7
 OB_Y0			equ		8
 OB_Y1			equ		9
 OB_NEW			equ		10					; +10: видим?, запись, фаза, столбец, строка
-OB_LATE			equ		16					; отложен бюджетом кадра — в следующем кадре обязателен
+OB_LATE			equ		16					; сколько кадров подряд отложен бюджетом (первым в очереди; LATE_MAX — обязателен)
+	IFNDEF LATE_MAX
+LATE_MAX		equ		2
+	ENDIF
 OBSZ			equ		32
 objs:			DS		OBSZ * NOBJ, 0
 
@@ -84,9 +87,6 @@ bl_go:			ld		(bx_mode), a
 				rrca
 				and		0x1f
 				add		a, 3					; + запас (в замещении — нули)
-	IFDEF OLDBC
-				ld		a, BLIT_COST
-	ENDIF
 				call	di_guard
 				pop		bc
 				pop		de
@@ -405,14 +405,23 @@ rw_l:			push	bc
 				call	obj_window				; A = 0 — не менялся, иначе B = верх, C = низ, ow_cost, nb_*
 				pop		de
 				or		a
-				jp		z, rw_st
-				pop		hl						; отложен в прошлом кадре — флаг 2 (первым в очереди)
+				jp		nz, rw_ch
+				pop		hl						; не менялся — счётчик «отложен» в 0
+				push	hl
+				ld		bc, OB_LATE
+				add		hl, bc
+				ld		(hl), a
+				jp		rw_st
+rw_ch:			pop		hl						; отложен в прошлом кадре — флаг 2 (первым в очереди)
 				push	hl
 				push	de
 				ld		de, OB_LATE
 				add		hl, de
 				ld		a, (hl)
 				pop		de
+				or		a
+				ld		a, 1
+				jp		z, rw_st
 				inc		a
 rw_st:			ld		(de), a
 				inc		de
@@ -538,14 +547,10 @@ rq_sel:			ld		hl, (rs_best)			; объект = objs + (окно - rs_win) * OBSZ
 				jp		c, rs_go
 rs_defer:		push	hl						; не укладывается в кадр — в следующем кадре
 				add		hl, bc
-				ld		(hl), 1
+				inc		(hl)
 				pop		hl
 				jp		rs_pass
-rs_go:			push	hl
-				add		hl, bc
-				ld		(hl), a
-				pop		hl
-				ld		(ou_obj), hl
+rs_go:			ld		(ou_obj), hl
 				ex		de, hl
 				ld		(ou_win), hl
 				ex		de, hl
@@ -556,15 +561,12 @@ rs_none:		ld		a, (rs_left)
 				ret		z
 				call	logic_pend				; ждём луч — пока шаг логики (состояние объектов уже снято)
 				jp		nz, rs_pass
-	IFNDEF NOFORCE
 				ld		hl, rs_win				; герой или оружие: ожидание луча переполнит кадр —
 				call	rs_force				; рисовать сейчас (шов в одном кадре лучше потерянного кадра)
 				jp		c, rq_sel
 				ld		hl, rs_win + RSW
 				call	rs_force
 				jp		c, rq_sel
-	ENDIF
-	IFNDEF NORN
 				ld		hl, rs_win + 2 * RSW	; остальные: ожидание луча переполнит кадр — в следующий кадр
 				ld		b, NOBJ - 2
 rn_l:			push	bc
@@ -572,7 +574,6 @@ rn_l:			push	bc
 				call	rs_force
 				pop		hl
 				jp		nc, rn_n
-				ld		(hl), 0
 				push	hl
 				ld		de, 0 - rs_win			; объект = objs + (окно - rs_win) * 4
 				add		hl, de
@@ -580,14 +581,22 @@ rn_l:			push	bc
 				add		hl, hl
 				ld		de, objs + OB_LATE
 				add		hl, de
-				ld		(hl), 1
+				ld		a, (hl)
+				cp		LATE_MAX
+				jp		nc, rn_force			; откладывался LATE_MAX раз подряд — рисовать сейчас
+				inc		(hl)
 				pop		hl
+				ld		(hl), 0
 rn_n:			ld		de, RSW
 				add		hl, de
 				pop		bc
 				dec		b
 				jp		nz, rn_l
-	ENDIF
+				jp		rn_wait
+rn_force:		pop		hl						; rs_best = окно (rs_force)
+				pop		bc
+				jp		rq_sel
+rn_wait:
 				ld		a, (frames)				; ждём луч; кадр уже сменился — выводим как есть
 				ld		hl, rs_frm
 				cp		(hl)
@@ -648,17 +657,15 @@ rs_budget:		ld		a, l					; герой и оружие (HL < objs + 2 * OBSZ) —
 				sub		low (objs + 2 * OBSZ)
 				ld		a, h
 				sbc		a, high (objs + 2 * OBSZ)
-	IFDEF OLDWP
-				ld		a, l
-				cp		low objs
-				jp		nz, rb_1
-				ld		a, h
-				cp		high objs
-				jp		z, rb_ok
-	ELSE
 				jp		c, rb_ok
-	ENDIF
-rb_1:			inc		de
+rb_1:			push	hl						; откладывался LATE_MAX раз подряд — обязателен
+				ld		bc, OB_LATE
+				add		hl, bc
+				ld		a, (hl)
+				pop		hl
+				cp		LATE_MAX
+				jp		nc, rb_ok
+				inc		de
 				inc		de
 				inc		de
 				ld		a, (rs_beam)
@@ -867,10 +874,8 @@ beam_hi:		di
 				in		a, (0x0B)
 				in		a, (0x0B)
 				cpl
-	IFNDEF OLDBH
 				cp		FRAME_HI + 2			; с запасом: прерывание в этот момент ещё может прийти
 				jp		nc, bh_lost
-	ENDIF
 				ei
 				ret
 bh_lost:		push	hl
@@ -880,9 +885,14 @@ bh_lost:		push	hl
 				ei
 				ret
 
-; HL = объект
+; HL = объект (счётчик «отложен» сбрасывается — объект выводится)
 obj_update:		ld		d, h
 				ld		e, l
+				ld		bc, OB_LATE
+				add		hl, bc
+				ld		(hl), 0
+				ld		h, d
+				ld		l, e
 				ld		bc, OB_NEW
 				add		hl, bc
 				ld		a, (hl)
