@@ -84,7 +84,12 @@ logic_pend:		ld		a, (ml_pend)
 				dec		a
 				ld		(ml_pend), a
 				call	logic_step
-				call	collect_events
+				ld		a, (god)
+				or		a
+				jp		z, lp_1
+				ld		a, max_health
+				ld		(C_health), a
+lp_1:			call	collect_events
 				or		1
 				ret
 ml_pend:		DB		0
@@ -440,6 +445,11 @@ kbd_scan:		ld		a, 0x8a					; порт B — вход
 				in		a, (0x02)
 				cpl
 				ld		(kb_row7), a
+				ld		a, 0xfd					; ряд 1: F1 (б3), F3 (б5) — старт в god mode из меню
+				out		(0x03), a
+				in		a, (0x02)
+				cpl
+				ld		(kb_row1), a
 				ld		a, 0x88					; порт B — выход (бордюр 0), прокрутка FF
 				out		(0x00), a
 				xor		a
@@ -449,6 +459,8 @@ kbd_scan:		ld		a, 0x8a					; порт B — вход
 				ret
 kb_row0:		DB		0
 kb_row7:		DB		0
+kb_row1:		DB		0
+god:			DB		0						; 1 — god mode (F1+F3 в меню): здоровье после каждого шага полное
 read_input:		ld		a, (kb_row0)
 				ld		c, a
 				ld		a, (kb_row7)

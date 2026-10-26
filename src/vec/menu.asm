@@ -1,7 +1,7 @@
 ; menu.asm: меню выбора героя (menu.asm CPC). Фон — из квазидиска (снимок CPC tools/cpcmenu.js,
 ; tools/mkgame.py: логотип, надписи, указатель), палитра меню pal_menu. Три героя — спрайтами (объекты 0..2,
 ; маг, рыцарь, серв через CHAR_GAP), выбирается стоящий у указателя. Стрелки — сдвиг (update_menu,
-; check_keys CPC), огонь — старт через MN_START кадров.
+; check_keys CPC), огонь — старт через MN_START кадров; F1 + F3 — старт в god mode (бессмертие).
 
 MN_KV			equ		0x10					; квазидиск стр. 0, стековый режим
 CHAR_LEFT		equ		20						; character_left/mid/right/gap CPC
@@ -49,9 +49,16 @@ mn_loop:		call	wait_frame
 				or		a
 				jp		nz, mn_starting
 				call	mn_update
+				ld		a, (kb_row1)			; F1 + F3 — старт в god mode
+				and		0x28
+				cp		0x28
+				ld		a, 1
+				jp		z, mn_go_god
 				ld		a, (C_keys_pressed)
 				and		(1 << player_fire1_bit) | (1 << player_fire2_bit)
 				jp		z, mn_draw
+				xor		a
+mn_go_god:		ld		(god), a
 				ld		a, MN_START
 				ld		(C_menu_state), a
 				ld		a, SND_START
