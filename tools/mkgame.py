@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import roomref as rr
 from cpcpal import mode0
 from mkroom_slots import SLOT, ROW0, PAL8, PERM
+import pixsmooth
 from cpcpal import rgb
 
 OUT = sys.argv[1]
@@ -133,6 +134,8 @@ def frame(key, rows, mp=None):
     hires = False
     if GFX_ZX and zx_cands(key):
         rows, _zn = zxgfx.colorize(rows, zx_cands(key)); hires = True
+    else:
+        rows = pixsmooth.smooth2x(rows); hires = True        # точки Вектора, сглаженный силуэт
     y0, h, streams, ncols, costs = sprite_streams(rows, mp, hires)
     assert h <= 24, (key, h)
     addrs = []; page = None
@@ -204,6 +207,7 @@ def item_desc(key, rows):
         if k == key: return lab
     lab = 'it_%d' % len(ITEMS)
     rows_n = len(rows); w = len(rows[0])
+    hi = pixsmooth.smooth2x(rows)                       # точки Вектора
     descs = []
     for ph in range(2):
         off = 4 * ph
@@ -216,11 +220,11 @@ def item_desc(key, rows):
             masks.append(m)
             for k in range(NPL):
                 col = []
-                for r in rows:
+                for r in hi:
                     v = 0
                     for j in range(8):
                         x = c * 8 + j - off
-                        if 0 <= x < 2 * w and (SLOT[r[x // 2]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
+                        if 0 <= x < 2 * w and (SLOT[r[x]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
                     col.append(v)
                 if rows_n % 2: col.append(0)
                 data += bytes(col)

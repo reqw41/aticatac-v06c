@@ -16,6 +16,7 @@
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
+import pixsmooth
 import roomref as rr
 from cpcpal import mode0, vecbyte
 
@@ -62,6 +63,7 @@ tot = 0
 for (t, rot) in sorted(used):
     px = variant(t, rot)
     rows = len(px); w = len(px[0])                 # w пикселей CPC (чётно)
+    hi = pixsmooth.smooth2x(px)                    # точки Вектора, сглаженный силуэт (tools/pixsmooth.py)
     names = []
     for ph in range(2):                            # сдвиг 0 или 4 точки (байт CPC в столбце Вектора)
         off = 4 * ph
@@ -79,7 +81,7 @@ for (t, rot) in sorted(used):
                     v = 0
                     for j in range(8):
                         x = (c * 8 + j - off)
-                        if 0 <= x < 2 * w and (SLOT[px[r][x // 2]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
+                        if 0 <= x < 2 * w and (SLOT[hi[r][x]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
                     col.append(v)
                 if rows % 2: col.append(0)
                 data += bytes(col)
