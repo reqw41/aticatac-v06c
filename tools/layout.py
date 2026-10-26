@@ -13,7 +13,7 @@ import json, os, re, subprocess, sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 B = os.path.join(ROOT, 'build/game')
 SJ = os.path.join(ROOT, 'tools/sjasmplus')
-CODE = ['src/vec/main.asm', 'src/vec/spr.asm', 'src/vec/roomdraw.asm', 'src/vec/sound_game.asm', 'src/vec/panel.asm'] + \
+CODE = ['src/vec/main.asm', 'src/vec/spr.asm', 'src/vec/roomdraw.asm', 'src/vec/sound_game.asm', 'src/vec/panel.asm', 'src/vec/menu.asm', 'src/vec/endscr.asm'] + \
     ['src/i8080/%s.asm' % m for m in ('playermove', 'util', 'weapon', 'sprite', 'boss', 'doors', 'items', 'room',
                                        'food', 'chicken', 'player', 'collectables', 'clock', 'state', 'game')]
 DATA = ['build/room/items.inc', 'build/game/sprites.inc', 'build/room/pal.inc', 'build/l80/item_wh.inc']

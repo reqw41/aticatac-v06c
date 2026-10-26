@@ -39,6 +39,8 @@ const edd = fs.readFileSync(ROOTD + '/build/game/aticatac.edd');
 for (let p = 0; p < 4; p++) for (let a = 0; a < 0x10000; a++) memory.bytes[memory.tobank(((p + 1) << 16) + a)] = edd[p * 0x10000 + a];
 const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] };
 const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
+// меню (src/vec/menu.asm): по умолчанию огонь на 40-м кадре — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
+for (const x of (process.env.MENU || '40:space,44:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
 const { S: MS, Mem } = require(ROOTD + '/src/model/core');
 const model = require(ROOTD + '/src/model');
 const game = require(ROOTD + '/src/model/game'), state = require(ROOTD + '/src/model/state');

@@ -7,6 +7,7 @@ python3 -I tools/mk80sym.py >/dev/null
 python3 -I tools/mk80data.py >/dev/null
 python3 -I tools/mkroom.py build/room >/dev/null
 node tools/cpcpanel.js >/dev/null
+node tools/cpcmenu.js >/dev/null
 python3 -I tools/mkgame.py build/game
 [ -f build/l80/holes.json ] || node tools/holes.js build/golden/*.json.gz
 python3 - <<'PY'
@@ -32,6 +33,7 @@ put(2, 0xC000, 'build/game/bgf_rooms.bin')
 import re
 pa = int(re.search(r'PANEL_ADDR\tequ 0x([0-9A-F]+)', open('build/game/sprites.inc').read()).group(1), 16)
 put(2, pa, 'build/game/panel_kv.bin')
+put(0, 0x8000, 'build/game/menu_kv.bin')
 assert len(open('build/room/items2.bin', 'rb').read()) <= 0xA300
 open('build/game/aticatac.edd', 'wb').write(edd)
 print('aticatac.edd: 256 КБ')

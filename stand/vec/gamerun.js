@@ -44,6 +44,8 @@ memory.write = function (addr, v, st) {
 const beamRow = () => { const l = Math.floor(frc / 192) - 40; return l >= 0 && l < 256 ? 255 - l : -1; };
 const KEYS = { left: [0, 0x10], up: [0, 0x20], right: [0, 0x40], down: [0, 0x80], space: [7, 0x80], z: [7, 0x04] };
 const plan = (SCRIPT || '').split(',').filter(Boolean).map((x) => { const [f, k] = x.split(':'); return [+f, k ? k.split('+') : []]; });
+// меню (src/vec/menu.asm): по умолчанию огонь на 40-м кадре — рыцарь; MENU="10:left,14:,60:space,64:" — свой выбор
+for (const x of (process.env.MENU || '40:space,44:').split(',').filter(Boolean).reverse()) { const [f, k] = x.split(':'); plan.unshift([+f, k ? k.split('+') : []]); }
 fs.mkdirSync(OUTDIR, { recursive: true });
 let frc = 0, frames = 0, tacc = 0, total = 0;
 const N = +NF;
@@ -59,16 +61,18 @@ const okpc = new Uint8Array(0x10000); okpc[0] = okpc[1] = okpc[2] = okpc[3] = 1;
 for (const [a, b] of JSON.parse(fs.readFileSync(ROOTD + '/build/game/ranges.json'))) for (let p = a; p < b; p++) okpc[p] = 1;
 let pcPrev = 0; const wPrev = {}; let lastDg = 0, lastDgT = 0; const lostAt = {}, deferN = {}, lpc = {}; let oneN = 0, oneP = {}; let rtCur = null; const rtList = [], rtAll = [];
 const streak = [0,0,0,0,0,0], maxStreak = [0,0,0,0,0,0], maxAt = [0,0,0,0,0,0];
+let mtl = 0, seqFL = ''; const seqF = [];
 const fnAt = {}, fnOpen = {}, fnSum = {}, fnHist = {}, loopH = [], loopH2 = []; let loopT0 = 0, loopRoom = false, loopFn = {};
 for (const n of ['wait_frame', 'logic_step', 'collect_events', 'apply_events', 'render_sprites', 'panel_update']) if (S[n] !== undefined) fnAt[S[n]] = n;
 while (frames < N) {
   if (frc >= 59904) {
     frc -= 59904; frames++; irqUntil = +(process.env.IRQW || 64);          // как на железе и в Emu80: под DI прерывание теряется
+    for (const x of (process.env.POKE || '').split(',').filter(Boolean)) { const [f, av] = x.split(':'); const [a, v] = av.split('='); if (+f === frames) memory.bytes[memory.tobank(S[a] !== undefined ? S[a] : +a)] = +v; }
     for (const [f, ks] of plan) if (f === frames) { keyboard.matrix.fill(0); for (const k of ks) { const [r, b] = KEYS[k]; keyboard.matrix[r] |= b; } }
     if (frames % (+process.env.SHOTN || 50) === 0) {
       const buf = Buffer.alloc(0x8000 + 16);
       for (let a = 0; a < 0x8000; a++) buf[a] = rd(0x8000 + a);
-      for (let i = 0; i < 16; i++) buf[0x8000 + i] = rd(S.pal_data + i);
+      { const ps = S.sp_src !== undefined ? ((rd(S.sp_src) | rd(S.sp_src + 1) << 8) - 15) & 0xffff : S.pal_data; for (let i = 0; i < 16; i++) buf[0x8000 + i] = rd((ps > 0 ? ps : S.pal_data) + i); }
       fs.writeFileSync(OUTDIR + '/f' + String(frames).padStart(4, '0') + '.raw', buf);
     }
   }
@@ -104,6 +108,8 @@ while (frames < N) {
   if (process.env.WATCH) { for (const o of [3, 5]) { const v = rd(S.objs + o * 32); if (v !== wPrev[o]) { if (frames > 280 && frames < 300) console.log('объект', o, 'нарисован', wPrev[o], '->', v, 'кадр', frames, 'pc', nmOf(pcPrev), 'sp', cpu.sp.toString(16)); wPrev[o] = v; } } pcPrev = cpu.pc; }
   if (process.env.LONGLOOP && (cpu.pc === S.add_to_score || cpu.pc === S.kill_sprite)) console.log(cpu.pc === S.kill_sprite ? 'УБИТ кадр' : 'ОЧКИ кадр', frames);
   if (cpu.pc === S.render_sprites) { for (let o = 0; o < 6; o++) { const l = rd(S.objs + o * 32 + 16); streak[o] = l ? streak[o] + 1 : 0; if (process.env.STRK && o === 5 && streak[o] > 3 && streak[o] < 12) console.log('объект 5 кадр', frames, 'late', l, 'obj', [...Array(16).keys()].map((i) => rd(S.objs + 160 + i)).join(','), 'pc', nmOf(cpu.pc)); if (streak[o] > maxStreak[o]) { maxStreak[o] = streak[o]; maxAt[o] = frames; } } }
+  if (process.env.MTRACE && (cpu.pc === S.menu || cpu.pc === S.new_game || cpu.pc === S.mn_loop && !mtl || cpu.pc === S.mn_starting)) { if (cpu.pc === S.mn_loop) mtl = 1; if (cpu.pc === S.menu) mtl = 0; console.log('МЕНЮ', nmOf(cpu.pc), 'кадр', frames, 'keys', rd(S.C_keys_pressed), 'state', rd(S.C_menu_state)); }
+  if (process.env.SEQF && frames >= +process.env.SEQF && seqF.length < 80) { const n = nmOf(cpu.pc).split('+')[0]; if (n !== seqFL) { seqF.push(n); seqFL = n; } if (seqF.length === 80) console.log('ПУТЬ', seqF.join(' ')); }
   if (cpu.pc === S.render_sprites) nRend++;
   if (cpu.pc === S.di_guard) { lastDg = frc; lastDgT = total; }
   if (process.env.LONGPC && frames >= +process.env.LONGPC && frames < +process.env.LONGPC + 4) { const n = nmOf(cpu.pc).split('+')[0]; lpc[n] = (lpc[n] || 0) + 1; }

@@ -395,6 +395,7 @@ render_sprites:	call	obj_player
 				call	obj_s1
 				call	obj_s2
 				call	obj_s3
+render_objs:											; (меню: состояния объектов уже записаны)
 				; окна строк изменившихся объектов (y CPC -> старшие байты счётчика от прерывания)
 				ld		hl, objs
 				ld		de, rs_win

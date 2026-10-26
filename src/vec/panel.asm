@@ -37,6 +37,37 @@ pi_col:			ld		h, d
 				ld		d, a
 				cp		0xe0 + 24
 				jp		nz, pi_col
+				ld		a, 0x10					; жизни — фигурки выбранного героя (квазидиск стр. 0)
+				out		(0x10), a
+				ld		a, (hero)				; LIVES_ADDR + hero * 24 * LIVES_N
+				ld		hl, LIVES_ADDR
+				ld		de, 24 * LIVES_N
+				or		a
+				jp		z, pi_h1
+pi_h:			add		hl, de
+				dec		a
+				jp		nz, pi_h
+pi_h1:			ld		sp, hl
+				ld		de, 0x8000 + 24 * 256 + ROW0 - LIVES_Y0
+pi_lc:			ld		h, d
+				ld		l, e
+				ld		a, LIVES_N / 2
+pi_ll:			pop		bc
+				ld		(hl), c
+				dec		l
+				ld		(hl), b
+				dec		l
+				dec		a
+				jp		nz, pi_ll
+				inc		d
+				ld		a, d
+				and		0x1f
+				jp		nz, pi_lc
+				ld		a, d
+				add		a, 0x20 - 8
+				ld		d, a
+				cp		0xe0 + 24
+				jp		nz, pi_lc
 				xor		a
 				out		(0x10), a
 				ld		hl, (pn_ssp)
@@ -214,7 +245,7 @@ kv_read:		di
 				add		hl, sp
 				ld		(pn_ssp), hl
 				ex		de, hl
-				ld		a, PN_KV
+				ld		a, (kr_pg)
 				out		(0x10), a
 				ld		sp, hl
 				ld		hl, (kr_dst)
@@ -232,6 +263,7 @@ kr_l:			pop		de
 				ei
 				ret
 kr_dst:			DW		0
+kr_pg:			DB		PN_KV					; страница квазидиска (порт 0x10) для kv_read
 
 ; жизни: убывает — стереть фигурку life_table[новое число] (2 столбца, высота героя)
 pn_lives_upd:	ld		a, (C_num_lives)

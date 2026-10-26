@@ -299,7 +299,68 @@ for ch in range(11):
     glyph.append('\tDB ' + ', '.join('0x%02X' % b for k in range(NPL) for b in gc[(0, k)]))
 inc += glyph
 inc.append('PANEL_ADDR\tequ 0x%04X\nCHICK_ADDR\tequ 0x%04X' % (PANEL_ADDR, CHICK_ADDR))
+# шрифт экрана итогов (font_data_mode0 CPC, банк комнат): символы ' '..'Z', для масок цвета 0x03 и 0xF3
+# (show_text: AND с маской) — 3 плоскости x 8 строк на символ, стр. 0 после жизней (раздел меню)
+fnt = bytearray()
+for mask in (0x03, 0xF3):
+    for ch in range((S['font_data_mode1'] - S['font_data_mode0']) // 16):
+        g = S['font_data_mode0'] - 0x4000 + 16 * ch
+        rows = [[p for i in range(2) for p in mode0(rooms[g + 2 * y + i] & mask)] for y in range(8)]
+        gc = vec_cols(lambda y: rows[y], 1, 8)
+        for k in range(NPL): fnt += gc[(0, k)]
 open(os.path.join(OUT, 'panel_kv.bin'), 'wb').write(bytes(panel_blob) + bytes(chick))
+
+# --- меню: снимок CPC (tools/cpcmenu.js), экран 256 x 192 в трёх полосах: строки 0..MENU_B0-1 — режим 1
+# (чёрный, ярко-красный, розовый, белый), MENU_B0..MENU_B1-1 — режим 0 с палитрой игры (герои — спрайтами,
+# на снимке стираются; указатель остаётся), дальше — режим 1 (чёрный, ярко-красный, ярко-зелёный, белый).
+# Палитра меню — как в игре, но слот тёмно-красного — ярко-красный; розовый -> оранжевый, зелёный -> голубой.
+MENU_B0, MENU_B1 = 116, 164
+HERO_Y0, HERO_Y1 = 0x7a, 0x7a + 21                  # character_select_y, max_player_height
+men = open(os.path.join(rr.ROOT, 'build/game/menu_cpc.bin'), 'rb').read()[:0x4000]
+mbyte = lambda x, y: men[(y >> 3) * 64 + (y & 7) * 0x800 + x]
+LOGO1 = [0, 9, 10, 13]                              # перья игры для 4 цветов режима 1 (розовый -> оранжевый)
+LOGO2 = [0, 9, 4, 13]                               # зелёный -> голубой (перо 4)
+def menu_pens(y):
+    if MENU_B0 <= y < MENU_B1:
+        if HERO_Y0 <= y < HERO_Y1: return [0] * 128 * 2
+        return [p for x in range(64) for p in mode0(mbyte(x, y)) for _ in (0, 1)]
+    lp = LOGO1 if y < MENU_B0 else LOGO2
+    out = []
+    for x in range(64):
+        b = mbyte(x, y)
+        for i in range(4): out.append(lp[((b >> (7 - i)) & 1) | ((b >> (3 - i)) & 1) << 1])
+    return out
+menu_blob = bytearray()
+mrows = [menu_pens(y) for y in range(192)]
+for k in range(NPL):
+    for c in range(32):
+        for y in range(192):
+            v = 0
+            for j in range(8):
+                if (SLOT[mrows[y][c * 8 + j]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
+            menu_blob.append(v)
+MENU_ADDR = 0x8000                                  # квазидиск стр. 0 (спрайты — стр. 3, 0..0x7FFF стр. 0 — запас)
+assert not kv.data[0] or len(kv.data[0]) <= 0x8000
+# жизни на панели — фигурки выбранного героя: строки LIVES_Y0..+LIVES_N столбцов 24..31 для рыцаря, мага,
+# серва (снимки tools/cpcpanel.js), после фона меню; panel_init накладывает по hero
+LIVES_Y0, LIVES_N = 120, 28
+LIVES_ADDR = MENU_ADDR + len(menu_blob)
+for name in ('', '_1', '_2'):
+    ph = open(os.path.join(rr.ROOT, 'build/game/panel_cpc%s.bin' % name), 'rb').read()[:0x4000]
+    hb = lambda x, y, ph=ph: ph[(y >> 3) * 64 + (y & 7) * 0x800 + x]
+    lc = vec_cols(lambda y: [p for i in range(16) for p in mode0(hb(48 + i, LIVES_Y0 + y))], 8, LIVES_N)
+    for k in range(NPL):
+        for c in range(8): menu_blob += lc[(c, k)]
+FONT_ADDR = MENU_ADDR + len(menu_blob)
+menu_blob += fnt
+assert FONT_ADDR + len(fnt) <= 0x10000
+inc.append('FONT_ADDR\tequ 0x%04X\nFONT_N\tequ %d' % (FONT_ADDR, (S['font_data_mode1'] - S['font_data_mode0']) // 16))
+inc.append('LIVES_ADDR\tequ 0x%04X\nLIVES_Y0\tequ %d\nLIVES_N\tequ %d' % (LIVES_ADDR, LIVES_Y0, LIVES_N))
+open(os.path.join(OUT, 'menu_kv.bin'), 'wb').write(bytes(menu_blob))
+from cpcpal import vecbyte
+from mkroom_slots import PERM
+mpal = [vecbyte(9 if PAL8[PERM[i >> 1]] == 7 else PAL8[PERM[i >> 1]]) for i in range(16)]
+inc.append('MENU_ADDR\tequ 0x%04X\npal_menu:\tDB %s' % (MENU_ADDR, ', '.join('0x%02X' % v for v in mpal)))
 os.makedirs(OUT, exist_ok=True)
 open(os.path.join(OUT, 'bgf_rooms.bin'), 'wb').write(bgf)
 for p, d in list(kv.data.items()) + [(2, kv2.data[2])]:

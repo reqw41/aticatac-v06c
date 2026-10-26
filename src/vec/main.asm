@@ -16,6 +16,7 @@ start:			di
 				ld		a, 10
 				call	dbg_border	; этап	; этап
 	ENDIF
+				jp		menu
 new_game:		di
 				call	hero_setup
 	IFDEF DEBUGB
@@ -41,10 +42,22 @@ main_loop:		call	wait_frame				; A = сколько кадров прошло (1
 				ld		a, 4					; не больше 4 шагов подряд (после долгой отрисовки комнаты)
 ml_n:			ld		(ml_pend), a			; шагов логики за прошедшие кадры — ровно 50 в секунду
 				call	apply_events			; сразу после прерывания — вывод (луч ещё над картинкой)
+				ld		hl, (C_current_game_state + 1)	; итоги: спрайтов нет
+				ld		a, l
+				cp		low C_end_tasks
+				jp		nz, ml_play
+				ld		a, h
+				cp		high C_end_tasks
+				jp		z, ml_end
+ml_play:
 				call	render_sprites			; по состоянию прошлого шага; пока объект ждёт луч, вывод
 				call	panel_update			; сам делает шаг логики (logic_pend)
 ml_l:			call	logic_pend
 				jp		nz, ml_l
+				jp		ml_echk
+ml_end:			call	logic_pend				; итоги: только логика (end_task_v уводит в меню)
+				jp		nz, ml_end
+ml_echk:
 	IFDEF ECHK
 				ld		hl, (echk_n)			; проверка стенда: после ECHK шагов стереть всё и встать
 				inc		hl
@@ -112,15 +125,14 @@ run_task:		ld		hl, (C_current_game_state + 1)
 				JPHL	C_falling_tasks, falling_tasks
 				JPHL	C_end_tasks, end_task_v
 				ret
-; конец игры: задержка, потом по клавише — новая игра (меню у Вектора своё; пока сразу рыцарь)
+; конец игры (end_tasks CPC): задержка, потом по клавише — меню (state_menu у Вектора — src/vec/menu.asm)
 end_task_v:		ld		a, (C_end_key_delay)
 				or		a
 				jp		nz, end_tasks
 				ld		a, (C_keys_pressed)
 				or		a
 				ret		z
-				pop		hl						; из run_task
-				jp		new_game
+				jp		menu					; стек меню ставит само
 
 ; события вывода: собираются после каждого шага логики (их признаки логика сбрасывает на следующем
 ; шаге, а догоняющий шаг идёт без вывода), применяются один раз перед выводом спрайтов
@@ -130,6 +142,10 @@ collect_events:	ld		hl, (was_task)
 				jp		z, ce_1
 				JPHL	C_game_tasks, ce_room	; draw_room в этом шаге
 ce_1:			ld		hl, (was_task)
+				JPHL	C_end_tasks, ce_ret		; итоги уже на экране
+				ld		hl, (C_current_game_state + 1)
+				JPHL	C_end_tasks, ce_toend
+				ld		hl, (was_task)
 				JPHL	C_falling_tasks, ce_fall
 				ld		hl, (C_current_game_state + 1)
 				JPHL	C_falling_tasks, ce_tofall
@@ -139,6 +155,9 @@ ce_fall:		ld		hl, (C_current_game_state + 1)
 				ret
 ce_tofall:		ld		a, 1					; только что начали падать — очистить поле
 				ld		(ev_clear), a
+ce_ret:			ret
+ce_toend:		ld		a, 1					; конец игры — экран итогов
+				ld		(ev_end), a
 				ret
 ce_room:		ld		a, 1
 				ld		(ev_room), a
@@ -181,6 +200,7 @@ ep_1:			ex		de, hl
 				ld		(hl), d
 				ret
 ev_room:		DB		0
+ev_end:			DB		0
 ev_clear:		DB		0
 ev_tomb:		DW		0
 ev_doors:		DB		0
@@ -188,7 +208,15 @@ ev_doors:		DB		0
 ev_foods:		DB		0
 				DW		0, 0, 0, 0
 
-apply_events:	ld		a, (ev_room)
+apply_events:	ld		a, (ev_end)
+				or		a
+				jp		z, ae_0
+				call	erase_all
+				call	end_draw
+				call	forget_all
+				call	ev_reset
+				jp		resync
+ae_0:			ld		a, (ev_room)
 				or		a
 				jp		z, ae_1
 				call	render_room				; долго под DI: прерывания терялись —
@@ -255,6 +283,7 @@ ae_6:			ld		hl, (ev_tomb)
 				call	nz, draw_food_item
 bg_changed:		nop								; (метка — стенду: спрайты стёрты, экран = фон)
 ev_reset:		xor		a
+				ld		(ev_end), a
 				ld		(ev_room), a
 				ld		(ev_clear), a
 				ld		(ev_doors), a
@@ -263,22 +292,55 @@ ev_reset:		xor		a
 				ld		(ev_tomb), hl
 				ret
 
-; герой — пока рыцарь (save_selection CPC)
-hero_setup:		xor		a
-				ld		(hero), a
-				ld		hl, C_knight_frames_table
+; выбранный герой (hero: 0 рыцарь, 1 маг, 2 серв) -> переменные CPC, как save_selection в menu.asm CPC
+hero_setup:		ld		a, (hero)
+				ld		l, a
+				add		a, a
+				add		a, a
+				add		a, l
+				add		a, a
+				add		a, l					; * 11
+				ld		l, a
+				ld		h, 0
+				ld		de, hero_tab
+				add		hl, de
+				ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
+				inc		hl
+				ex		de, hl
 				ld		(C_selected_player), hl
-				ld		a, knight_height
+				ex		de, hl
+				ld		a, (hl)
+				inc		hl
 				ld		(C_selected_player_height), a
-				ld		a, character_knight
+				ld		a, (hl)
+				inc		hl
 				ld		(C_player_character), a
-				ld		a, item_clock
+				ld		a, (hl)
+				inc		hl
 				ld		(C_magic_door), a
-				ld		a, 1
+				ld		a, (hl)
+				inc		hl
 				ld		(C_weapon_rotates), a
-				ld		hl, C_sword_data
+				ld		e, (hl)
+				inc		hl
+				ld		d, (hl)
+				ex		de, hl
 				ld		(C_weapon_type), hl
 				ret
+hero_tab:		DW		C_knight_frames_table
+				DB		knight_height, character_knight, item_clock, 1
+				DW		C_sword_data
+				DB		0, 0, 0
+				DW		C_wizard_frames_table
+				DB		wizard_height, character_wizard, item_bookcase, 0
+				DW		C_spell_data
+				DB		0, 0, 0
+				DW		C_serf_frames_table
+				DB		serf_height, character_serf, item_barrel, 0
+				DW		C_axe_data
+				DB		0, 0, 0
 hero:			DB		0
 
 ; ---- темп: кадровое прерывание (ISR по 0x38) считает кадры и перезаряжает счётчик 0 ВИ53 (режим 0, FFFF):
@@ -491,7 +553,9 @@ clr_l:			REPT	32
 				ld		sp, hl
 				ret
 clr_ssp:			DW		0
-set_palette:	ld		b, 3					; три кадра подряд: палитра пишется в обратном ходе
+set_palette:	ld		hl, pal_data + 15
+set_palette_hl:	ld		(sp_src), hl			; HL = последний байт палитры (16 байт)
+				ld		b, 3					; три кадра подряд: палитра пишется в обратном ходе
 sp_f:			push	bc
 				call	sp_once
 				pop		bc
@@ -503,7 +567,7 @@ sp_once:		ei								; дождаться прерывания кадра (ISR �
 				di
 				ld		a, 0x88					; порт B — выход (номер цвета палитры)
 				out		(0x00), a
-				ld		hl, pal_data + 15
+				ld		hl, (sp_src)
 				ld		c, 15
 sp_l:			ld		a, c
 				out		(0x02), a
@@ -520,6 +584,7 @@ sp_l:			ld		a, c
 				ld		a, 0xff
 				out		(0x03), a
 				ret
+sp_src:			DW		0
 
 	IFDEF DEBUGB
 dbg_border:		push	af
