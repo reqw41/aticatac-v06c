@@ -78,8 +78,18 @@ def reduce_map(frames_rows):
         if best is None or ch < best[0]: best = (ch, mp)
     return best[1]
 
-def sprite_streams(rows, mp=None):
-    """перья -> (yoff, h, [поток фазы 0..3], [столбцов фазы 0..3])"""
+GFX_ZX = os.environ.get('GFX_ZX') == '1'            # спрайты — формы ZX в разрешении Вектора с цветами CPC (tools/zxgfx.py)
+if GFX_ZX:
+    import zxgfx
+    _inv = {}
+    for _k, _v in S.items():
+        if isinstance(_v, int): _inv.setdefault(_v, _k)
+    def zx_cands(key):
+        if key.startswith(('bad_', 'wpn_')): return zxgfx.FIX.get(_inv.get(int(key[4:], 16), ''))
+        return zxgfx.FIX.get(key)
+
+def sprite_streams(rows, mp=None, hires=False):
+    """перья -> (yoff, h, [поток фазы 0..3], [столбцов фазы 0..3]); hires — строки в точках Вектора"""
     pens = [[SLOT[p] for p in r] for r in rows]
     if mp: pens = [[mp[v] for v in r] for r in pens]
     y0 = next((i for i, r in enumerate(pens) if any(r)), 0)
@@ -89,7 +99,7 @@ def sprite_streams(rows, mp=None):
     w = len(pens[0])
     out = []; ncols = []; costs = []
     for ph in range(4):
-        ncol = (2 * (w + ph) + 7) // 8
+        ncol = ((w + 2 * ph if hires else 2 * (w + ph)) + 7) // 8
         ncols.append(ncol)
         data, zero = [], []
         for c in range(ncol):
@@ -98,7 +108,7 @@ def sprite_streams(rows, mp=None):
                 for r in pens:
                     v = 0
                     for j in range(8):
-                        x = (c * 8 + j) // 2 - ph
+                        x = (c * 8 + j - 2 * ph) if hires else (c * 8 + j) // 2 - ph
                         if 0 <= x < w and (r[x] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
                     col.append(v)
                 if any(col): data.append((c + 0x20 * k, col))
@@ -120,7 +130,10 @@ stat = dict(frames=0, bytes=0)
 
 def frame(key, rows, mp=None):
     if key in frames: return frames[key]
-    y0, h, streams, ncols, costs = sprite_streams(rows, mp)
+    hires = False
+    if GFX_ZX and zx_cands(key):
+        rows, _zn = zxgfx.colorize(rows, zx_cands(key)); hires = True
+    y0, h, streams, ncols, costs = sprite_streams(rows, mp, hires)
     assert h <= 24, (key, h)
     addrs = []; page = None
     for s in streams:
