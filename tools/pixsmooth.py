@@ -30,15 +30,22 @@ def smooth2x_pixel(rows):
 
 
 def smooth2x(rows):
-    """сглаживание по контуру силуэта: край (переход фигура/фон) прослеживается по строкам; там, где он стоит на
+    """сглаживание по контуру силуэта (фон — чёрное, связанное с рамкой; внутренние дыры не трогаются): край прослеживается по строкам; там, где он стоит на
     месте n строк и сдвигается на 1 точку CPC, последние n // 2 строк отрезка сдвигаются на полточки к следующему
     (лесенка 2+2 -> шаг в 1 точку Вектора). Диагонали 45 градусов (n = 1) и одиночные точки не меняются."""
     h, w = len(rows), len(rows[0])
     out = [[p for p in r for _ in (0, 1)] for r in rows]
     if not ON: return out
     px = lambda x, y: rows[y][x] if 0 <= y < h and 0 <= x < w else 0
+    # фон — только чёрное, связанное с рамкой кадра: глаза, рот, прорези внутри фигуры — рисунок, не край
+    outside = set(); st = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
+    while st:
+        x, y = st.pop()
+        if not (0 <= x < w and 0 <= y < h) or (x, y) in outside or rows[y][x]: continue
+        outside.add((x, y)); st += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    bg = lambda x, y: not (0 <= x < w and 0 <= y < h) or (x, y) in outside
     for side in (-1, 1):                              # -1 — левые края, 1 — правые
-        edges = [[x for x in range(w) if px(x, y) and not px(x + side, y)] for y in range(h)]
+        edges = [[x for x in range(w) if px(x, y) and bg(x + side, y)] for y in range(h)]
         used = set()
         for y0 in range(h):
             for x0 in edges[y0]:
