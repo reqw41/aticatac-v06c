@@ -183,9 +183,9 @@ for st in sorted(set(structs)):
     lists.add((st + 5, w, h))
     alt = G16(st + 2)
     if alt: lists.add((alt, w, h))
-# 4 цвета: тыква, летучая мышь, призрак 2, прыгун, боссы (кроме мумии — она и так в 2 плоскостях)
+# 4 цвета: тыква, летучая мышь, призрак 2, прыгун, боссы (кроме мумии — она и так в 2 плоскостях, и Дракулы)
 REDUCE = {S[n] + 5 for n in ('spr_pumpkin', 'spr_large_bat', 'spr_ghost2', 'spr_bouncy',
-                             'boss_devil', 'boss_dracula', 'boss_frankie', 'boss_hunchback')} | {S['spr_large_bat_alt']}
+                             'boss_devil', 'boss_frankie', 'boss_hunchback')} | {S['spr_large_bat_alt']}   # Дракула — полный цвет (26.10)
 for lst, w, h in sorted(lists):
     mp = reduce_map([gfx('baddies', G16(lst + 2 * i), w, h) for i in range(4)]) if lst in REDUCE else None
     for i in range(4):
