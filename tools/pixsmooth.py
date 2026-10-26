@@ -4,9 +4,9 @@
 диагонали; внутренний рисунок не меняется, новых цветов нет. Выбор 26.10 (сравнение: удвоение / все цвета /
 силуэт). По умолчанию — простое удвоение; SMOOTH=1 — сглаживание (края выходят «мохнатыми», отклонено 26.10). Используют tools/mkgame.py (спрайты, ключи, еда) и tools/mkroom.py (предметы)."""
 import os
-ON = os.environ.get('SMOOTH', '0') == '1'           # по умолчанию выключено: края «мохнатые» (оценка владельца 26.10)
+ON = os.environ.get('SMOOTH', '1') != '0'
 
-def smooth2x(rows):
+def smooth2x_pixel(rows):
     """перья CPC (строки по w) -> строки по 2w в точках Вектора"""
     h, w = len(rows), len(rows[0])
     px = lambda x, y: rows[y][x] if 0 <= y < h and 0 <= x < w else 0
@@ -26,4 +26,46 @@ def smooth2x(rows):
                 r = 0 if F == 0 and ((B == 0) != (H == 0)) else E
             o += [l, r]
         out.append(o)
+    return out
+
+
+def smooth2x(rows):
+    """сглаживание по контуру силуэта: край (переход фигура/фон) прослеживается по строкам; там, где он стоит на
+    месте n строк и сдвигается на 1 точку CPC, последние n // 2 строк отрезка сдвигаются на полточки к следующему
+    (лесенка 2+2 -> шаг в 1 точку Вектора). Диагонали 45 градусов (n = 1) и одиночные точки не меняются."""
+    h, w = len(rows), len(rows[0])
+    out = [[p for p in r for _ in (0, 1)] for r in rows]
+    if not ON: return out
+    px = lambda x, y: rows[y][x] if 0 <= y < h and 0 <= x < w else 0
+    for side in (-1, 1):                              # -1 — левые края, 1 — правые
+        edges = [[x for x in range(w) if px(x, y) and not px(x + side, y)] for y in range(h)]
+        used = set()
+        for y0 in range(h):
+            for x0 in edges[y0]:
+                if (x0, y0) in used: continue
+                chain = [(x0, y0)]; used.add((x0, y0)); x, y = x0, y0
+                while y + 1 < h:                      # цепочка вниз: край следующей строки рядом (0 или 1)
+                    nxt = [e for e in edges[y + 1] if abs(e - x) <= 1 and (e, y + 1) not in used]
+                    if not nxt: break
+                    x = min(nxt, key=lambda e: abs(e - x)); y += 1
+                    chain.append((x, y)); used.add((x, y))
+                segs = []                             # отрезки одинакового x
+                for (x, y) in chain:
+                    if segs and segs[-1][0] == x: segs[-1][2] = y
+                    else: segs.append([x, y, y])
+                for a, b in zip(segs, segs[1:]):
+                    d = b[0] - a[0]
+                    if abs(d) != 1: continue
+                    n = a[2] - a[1] + 1
+                    for yy in range(a[2] - n // 2 + 1, a[2] + 1):
+                        x = a[0]; c = px(x, yy)
+                        out_toward = (d == side)      # край уходит наружу — дорисовать, внутрь — стесать
+                        if side == -1:
+                            if out_toward:
+                                if x > 0: out[yy][2 * x - 1] = c   # правая половина соседа слева
+                            else: out[yy][2 * x] = 0                # левая половина края
+                        else:
+                            if out_toward:
+                                if x < w - 1: out[yy][2 * x + 2] = c   # левая половина соседа справа
+                            else: out[yy][2 * x + 1] = 0            # правая половина края
     return out
