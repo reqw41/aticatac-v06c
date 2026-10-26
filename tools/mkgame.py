@@ -339,7 +339,7 @@ for k in range(NPL):
             for j in range(8):
                 if (SLOT[mrows[y][c * 8 + j]] >> (NPL - 1 - k)) & 1: v |= 0x80 >> j
             menu_blob.append(v)
-MENU_ADDR = 0x8000                                  # квазидиск стр. 0 (спрайты — стр. 3, 0..0x7FFF стр. 0 — запас)
+MENU_ADDR = 0x0000                                  # квазидиск стр. 0 (с 0xA000 — плеер звука akg80, tools/mkakg.py)
 assert not kv.data[0], 'спрайты вышли в стр. 0 — там звук (0x0000..) и меню (0x8000..)'
 # жизни на панели — фигурки выбранного героя: строки LIVES_Y0..+LIVES_N столбцов 24..31 для рыцаря, мага,
 # серва (снимки tools/cpcpanel.js), после фона меню; panel_init накладывает по hero
@@ -353,7 +353,7 @@ for name in ('', '_1', '_2'):
         for c in range(8): menu_blob += lc[(c, k)]
 FONT_ADDR = MENU_ADDR + len(menu_blob)
 menu_blob += fnt
-assert FONT_ADDR + len(fnt) <= 0x10000
+assert FONT_ADDR + len(fnt) <= 0xA000
 inc.append('FONT_ADDR\tequ 0x%04X\nFONT_N\tequ %d' % (FONT_ADDR, (S['font_data_mode1'] - S['font_data_mode0']) // 16))
 inc.append('LIVES_ADDR\tequ 0x%04X\nLIVES_Y0\tequ %d\nLIVES_N\tequ %d' % (LIVES_ADDR, LIVES_Y0, LIVES_N))
 open(os.path.join(OUT, 'menu_kv.bin'), 'wb').write(bytes(menu_blob))

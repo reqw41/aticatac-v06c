@@ -1,7 +1,8 @@
 ; sound_game.asm: звук игры и случайность (в сверке логики — src/i8080/sound.asm).
-; Звук — записи регистров AY с модели CPC (tools/cpcsound.js, tools/mksound.py: потоки в квазидиске стр. 0,
-; snd_tab). Проигрыватель — в прерывании кадра (snd_tick): есть AY (порты 0x15 — регистр, 0x14 — данные) —
-; регистры как есть; нет — тон двух самых громких каналов на счётчики 1 и 2 ВИ53 (счётчик 0 — часы кадра).
+; Звук — проигрыватель Arkos akg80 (src/vec/akg80.tpl, перенос PlayerAkg CPC на i8080, сверка с CPC —
+; tools/akg80check.js) и данные CPC в квазидиске стр. 0 с 0xA000, в прерывании кадра — через окно (snd_tick).
+; Есть AY (порты 0x15 — регистр, 0x14 — данные) — регистры с периодами x1,75; нет — тон двух самых громких
+; каналов на счётчики 1 и 2 ВИ53 (счётчик 0 — часы кадра).
 
 ; вместо ld a,r CPC: таймер ВИ53 (счётчик 0) + своё накопление. Портит только A.
 ldar:			push	hl
@@ -34,30 +35,27 @@ play_lowpriority_sfx:
 				jp		snd_play
 last_sfx:		DB		0
 
-SND_KV			equ		0x10					; квазидиск стр. 0, стековый режим
-; A = поток SND_* — играть с начала. Запрос подхватывает прерывание (snd_tick): адрес, потом флаг —
-; запись байта неделима, состояние прерываний не трогается
+; номера звуков для snd_play: мелодии (подпесни atic_tunes CPC 0, 1, 2, 4) и эффекты 1..12
+SND_MENU		equ		0
+SND_START		equ		1
+SND_OVER		equ		2
+SND_DONE		equ		3
+SND_SFX1		equ		4
+SND_WIN			equ		0x20					; порт 0x10: окно квазидиска стр. 0 на 0xA000..0xDFFF (плеер akg80)
+; A = звук SND_* — запрос; подхватывает прерывание (snd_tick): номер, потом флаг — запись байта неделима,
+; состояние прерываний не трогается
 snd_play:		cp		SND_SFX1				; ВИ53: порог громкости и шум — у музыки и эффектов свои
 				ld		hl, VI_THR_SFX
 				jp		nc, sp_sfx
 				ld		hl, VI_THR_MUS | 0x100	; H = 1 — музыка (шум не играть)
 sp_sfx:			ld		(vi_thr), hl
-				add		a, a
-				ld		l, a
-				ld		h, 0
-				ld		de, snd_tab
-				add		hl, de
-				ld		e, (hl)
-				inc		hl
-				ld		d, (hl)
-				ex		de, hl
-snd_req_hl:		ld		(snd_req), hl
+snd_req_a:		ld		(snd_req), a
 				ld		a, 1
 				ld		(snd_reqf), a
 				ret
-; тишина (поток остановлен)
-snd_stop:		ld		hl, 0
-				jp		snd_req_hl
+; тишина: пустая песня (NoMusic CPC — в игре музыки нет, только эффекты)
+snd_stop:		ld		a, 0xff
+				jp		snd_req_a
 ; заглушить: AY — громкости 0; ВИ53 — счётчики 1 и 2 в режиме 3 с делителем 2 (750 кГц не слышно, а средний
 ; уровень тот же, что у ноты: без скачка-щелчка; режим 3 дальше не меняется — пишется только делитель)
 snd_mute:		ld		a, (snd_ay)
@@ -114,128 +112,163 @@ ad_no:			xor		a
 				ld		(snd_ay), a
 				ret
 
-; ---- кадр звука (из прерывания, DI): 18 байт потока из квазидиска -> регистры ----
-snd_tick:		ld		a, (snd_reqf)			; запрос: новый поток или тишина
+; ---- кадр звука (из прерывания, DI): запрос, плеер akg80 (окно квазидиска), периоды x1,75 (AY Вектора 1,75 МГц,
+;      CPC — 1 МГц), изменившиеся регистры -> AY или ВИ53 ----
+snd_tick:		ld		a, SND_WIN
+				out		(0x10), a
+				ld		a, (snd_reqf)
 				or		a
-				jp		z, st_go
+				jp		z, st_play
 				xor		a
 				ld		(snd_reqf), a
-				ld		hl, (snd_req)
-				ld		(snd_ptr), hl
-				call	snd_mute
-st_go:			ld		hl, (snd_ptr)
-				ld		a, h
-				or		l
-				ret		z
-				ld		(st_base), hl
-				ld		a, l					; читать словами с чётного адреса
-				and		0xfe
-				ld		l, a
-				ex		de, hl
-				ld		hl, 0
-				add		hl, sp
-				ld		(st_ssp), hl
-				ld		a, SND_KV
-				out		(0x10), a
-				ex		de, hl
-				ld		sp, hl
-				ld		hl, snd_buf
-				REPT	9
-				pop		bc
-				ld		(hl), c
-				inc		hl
-				ld		(hl), b
-				inc		hl
-				ENDR
-				xor		a
-				out		(0x10), a
-				ld		hl, (st_ssp)
-				ld		sp, hl
-				ld		hl, snd_buf
-				ld		a, (st_base)
-				and		1
-				jp		z, st_0
-				inc		hl
-st_0:			ld		(st_start), hl
-				ld		a, (hl)					; m0
-				inc		hl
-				ld		c, a
-				ld		b, 0
-				cp		0x80
-				jp		nz, st_m
+				ld		a, (snd_req)
+				cp		0xff
+				jp		z, st_stop
+				cp		SND_SFX1
+				jp		nc, st_sfx
+				ld		e, a					; мелодия: подпесня
+				ld		d, 0
+				ld		hl, st_subs
+				add		hl, de
 				ld		a, (hl)
-				cp		0x80
-				jp		z, st_end
-st_m:			ld		a, c
+				ld		hl, AKG_ATIC_START
+				jp		st_init
+st_stop:		ld		a, 1					; пустая песня — akg_quiet
+				ld		(snd_quiet), a
+				ld		hl, AKG_NOMUSIC_START
+				xor		a
+				jp		st_init0
+st_init:		push	af
+				xor		a
+				ld		(snd_quiet), a
+				pop		af
+st_init0:		call	akg_init
+				ld		hl, AKG_SOUNDEFFECTS
+				call	akg_initsfx
+				jp		st_play
+st_sfx:			sub		SND_SFX1 - 1			; эффект на канале 1 (B), громкость полная — как play_sfx CPC
+				ld		bc, 0x0001
+				call	akg_playsfx
+st_play:		ld		a, (snd_quiet)
 				or		a
-				jp		p, st_1
-				ld		b, (hl)					; m1
+				jp		z, st_full
+				call	akg_quiet				; A = R7
+				jp		st_r7
+st_full:		call	akg_play				; A = R7
+st_r7:
+				and		0x3f
+				ld		(snd_new + 7), a
+				ld		hl, akg_regs
+				ld		de, snd_new
+				ld		c, 7
+st_cp:			ld		a, (hl)
+				ld		(de), a
 				inc		hl
-st_1:			ld		a, b					; маска 14 бит: BC = m0 | m1 << 7
-				rrca
-				and		0x80
+				inc		de
+				dec		c
+				jp		nz, st_cp
+				inc		hl
+				inc		de
+				ld		c, 3
+st_cp2:			ld		a, (hl)
+				ld		(de), a
+				inc		hl
+				inc		de
+				dec		c
+				jp		nz, st_cp2
+				xor		a
+				out		(0x10), a				; окно закрыто
+				ld		hl, snd_new				; периоды: (P * 7 + 2) / 4
+				ld		b, 3
+st_sc:			push	hl
+				ld		e, (hl)
+				inc		hl
+				ld		a, (hl)
+				and		0x0f
 				ld		d, a
-				ld		a, c
-				and		0x7f
-				or		d
-				ld		c, a
-				ld		a, b
-				or		a
-				rra
-				ld		b, a
-				ld		de, snd_st
-				xor		a
-				ld		(st_rn), a
-st_r:			ld		a, b					; сдвиг маски, в переносе — есть ли регистр
-				or		c
-				jp		z, st_done				; больше изменений нет
-				ld		a, b
-				or		a
-				rra
-				ld		b, a
-				ld		a, c
-				rra
-				ld		c, a
-				jp		nc, st_n
-				ld		a, (hl)
+				ld		h, d
+				ld		l, e
+				add		hl, hl
+				add		hl, hl
+				add		hl, hl
+				ld		a, l
+				sub		e
+				ld		l, a
+				ld		a, h
+				sbc		a, d
+				ld		h, a					; * 7
 				inc		hl
+				inc		hl
+				ld		a, h					; / 4
+				or		a
+				rra
+				ld		h, a
+				ld		a, l
+				rra
+				ld		l, a
+				ld		a, h
+				or		a
+				rra
+				ld		h, a
+				ld		a, l
+				rra
+				ld		l, a
+				ld		a, h
+				cp		0x10
+				jp		c, st_sc1
+				ld		hl, 0x0fff
+st_sc1:			ex		de, hl
+				pop		hl
+				ld		(hl), e
+				inc		hl
+				ld		(hl), d
+				inc		hl
+				dec		b
+				jp		nz, st_sc
+				ld		a, (hl)					; шум R6: (n * 7 + 2) / 4, не больше 31
+				and		0x1f
+				ld		b, a
+				add		a, a
+				add		a, a
+				add		a, a
+				sub		b
+				add		a, 2
+				rra
+				and		0x7f
+				rra
+				and		0x3f
+				cp		32
+				jp		c, st_n1
+				ld		a, 31
+st_n1:			ld		(hl), a
+				ld		hl, snd_new				; изменившиеся -> snd_st, AY
+				ld		de, snd_st
+				ld		c, 0
+st_o:			ld		a, (de)
+				cp		(hl)
+				jp		z, st_o1
+				ld		a, (hl)
 				ld		(de), a
 				ld		a, (snd_ay)
 				or		a
-				jp		z, st_n
-				ld		a, (st_rn)
+				jp		z, st_o1
+				ld		a, c
 				out		(0x15), a
-				ld		a, (de)
+				ld		a, (hl)
 				out		(0x14), a
-st_n:			inc		de
-				ld		a, (st_rn)
-				inc		a
-				ld		(st_rn), a
-				cp		14
-				jp		nz, st_r
-st_done:		ex		de, hl					; новый указатель = старый + прочитано
-				ld		hl, (st_start)
-				ld		a, e
-				sub		l
-				ld		e, a
-				ld		d, 0
-				ld		hl, (st_base)
-				add		hl, de
-				ld		(snd_ptr), hl
+st_o1:			inc		hl
+				inc		de
+				inc		c
+				ld		a, c
+				cp		11
+				jp		nz, st_o
 				ld		a, (snd_ay)
 				or		a
 				ret		nz
 				jp		vi_update
-st_end:			inc		hl						; конец: адрес повтора (0 — тишина)
-				ld		e, (hl)
-				inc		hl
-				ld		d, (hl)
-				ex		de, hl
-				ld		(snd_ptr), hl
-				ld		a, h
-				or		l
-				ret		nz
-				jp		snd_mute
+st_subs:		DB		0, 1, 2, 4				; подпесни atic_tunes: меню, старт, конец игры, победа
+snd_new:		DS		11
+
 ; ---- без AY: два самых громких звучащих канала -> счётчики 1 (порт 0x0A) и 2 (0x09) ВИ53, режим 3.
 ; Делитель ВИ53 (1,5 МГц) по периоду AY Вектора (1,75 МГц): D = P * 13,71 ~ P * 14 - P / 4; шум — случайный.
 vi_update:		ld		hl, 0					; H — громкость лучшего, L — канал; D/E — второй
@@ -480,8 +513,8 @@ vu_off:			pop		hl						; тишина: делитель 2 (см. snd_mute)
 				jp		vu_out
 
 
-snd_ptr:		DW		0						; следующий кадр потока в квазидиске (0 — тишина)
-snd_req:		DW		0						; запрос из основного кода (snd_play / snd_stop)
+snd_req:		DB		0						; запрос из основного кода (snd_play / snd_stop)
+snd_quiet:		DB		0						; 1 — пустая песня: только эффекты (akg_quiet)
 snd_reqf:		DB		0
 snd_ay:			DB		0						; 1 — есть AY
 snd_d1:			DW		0						; делители ВИ53 на счётчиках 1 и 2 (0 — тишина)
@@ -498,9 +531,4 @@ vu_v2:			DB		0
 vu_c2:			DB		0
 vu_p1:			DB		0xff					; канал AY на счётчике 1 / 2 в прошлом кадре
 vu_p2:			DB		0xff
-st_base:		DW		0
-st_start:		DW		0
-st_ssp:			DW		0
-st_rn:			DB		0
 snd_st:			DS		14						; состояние регистров AY
-snd_buf:		DS		18

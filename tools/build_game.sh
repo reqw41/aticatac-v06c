@@ -9,8 +9,8 @@ python3 -I tools/mkroom.py build/room >/dev/null
 node tools/cpcpanel.js >/dev/null
 node tools/cpcmenu.js >/dev/null
 python3 -I tools/mkgame.py build/game
-[ -f build/sound/sound.json ] || node tools/cpcsound.js
-python3 -I tools/mksound.py build/game >/dev/null
+python3 -I tools/akgflat.py >/dev/null
+python3 -I tools/mkakg.py >/dev/null
 [ -f build/l80/holes.json ] || node tools/holes.js build/golden/*.json.gz
 python3 - <<'PY'
 import json
@@ -35,8 +35,8 @@ put(2, 0xC000, 'build/game/bgf_rooms.bin')
 import re
 pa = int(re.search(r'PANEL_ADDR\tequ 0x([0-9A-F]+)', open('build/game/sprites.inc').read()).group(1), 16)
 put(2, pa, 'build/game/panel_kv.bin')
-put(0, 0x8000, 'build/game/menu_kv.bin')
-put(0, 0x0010, 'build/game/snd_kv.bin')
+put(0, 0x0000, 'build/game/menu_kv.bin')
+put(0, 0xA000, 'build/sound/akg/akg_kv.bin')
 assert len(open('build/room/items2.bin', 'rb').read()) <= 0xA300
 open('build/game/aticatac.edd', 'wb').write(edd)
 print('aticatac.edd: 256 КБ')

@@ -71,13 +71,17 @@ for (const [name, song, n] of [['menu', 0, 9000], ['start', 1, 175], ['over', 2,
   out.tunes[name] = { frames: loop ? frames.slice(0, loop.start + loop.len) : frames, loop: loop ? loop.start : -1 };
   console.log('мелодия', name, 'кадров', out.tunes[name].frames.length, 'повтор с', out.tunes[name].loop);
 }
-// эффекты: игра (рыцарь), на каждом эффекте — своя машина
+// эффекты: меню, пустая песня (NoMusic, как в игре), игра своих звуков не играет; эффект — play_sfx
 for (let e = 1; e <= 12; e++) {
-  const { m } = scenario.start({ menu: [{ frames: 150, keys: [] }, { frames: 10, keys: ['SPACE'] }, { frames: 5, keys: [] }], ticks: 1, steps: [{ ticks: 1, keys: [] }] });
-  m.runFrames(250);                               // после звука появления героя
-  m.runUntilPc(S.current_game_state, CPC.T_FRAME * 10);
+  const m = new CPC(path.join(__dirname, '../build/cpcnew'));
+  m.runFrames(60);
+  m.runUntilPc(S.menu_tasks, CPC.T_FRAME * 10);
+  call(m, S.init_sound_system, { h: S.nomusic_start >> 8, l: S.nomusic_start & 0xff, d: 0 });
+  m.runFrames(10);
+  m.runUntilPc(S.menu_tasks, CPC.T_FRAME * 10);
   m.poke(S.sound_guard, 0);
   call(m, S.play_sfx, { e });
+  m.runUntilPc(S.menu_tasks, CPC.T_FRAME * 10);
   const frames = record(m, 400, true);
   out.sfx.push({ frames });
   console.log('эффект', e, 'кадров', frames.length);

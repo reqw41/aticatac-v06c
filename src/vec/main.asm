@@ -5,6 +5,7 @@ start:			di
 				ld		sp, 0x4000
 				call	ay_detect
 				call	snd_mute
+				call	snd_stop				; плеер: пустая песня (прерывание запустит akg_init)
 				ld		a, 0xff
 				out		(0x03), a
 				call	set_palette
