@@ -8,13 +8,16 @@
 ; Константы раскладки (FL_*) — build/game/fddload.inc (tools/build_fdd.py), заставка — build/game/splash.inc.
 
 				INCLUDE	"../../build/game/fddload.inc"
-LD_ORG			equ		0xF000
-LD_BUF			equ		0xF800					; буфер сектора (1 КБ)
+LD_ORG			equ		0xF400
+TRK_BUF			equ		0xE000					; буфер стороны дорожки: до 5 секторов (0xE000..0xF3FF, невидимая плоскость)
 STUB			equ		0x3F00					; хвост: место стека игры
 
 				ORG		0x0100
 				di
-				ld		sp, LD_ORG
+				ld		sp, 0x0100				; 0x0080..0x00FF — дескриптор и пустое место, не нужны
+				call	turbo_init				; Турбо+: порты памяти и экрана — до переноса наверх (CP/M держит
+												; 0xE000..0xFFFF в другой памяти) и до первой записи в порт 0x10
+				ld		sp, 0					; стек — с 0xFFFF вниз, за загрузчиком
 				ld		hl, ld_payload
 				ld		de, LD_ORG
 				ld		bc, file_end - ld_payload
@@ -27,9 +30,51 @@ rl_copy:		ld		a, (hl)
 				or		c
 				jp		nz, rl_copy
 				jp		ld_start
+; Вектор Турбо+ (по порту Ianna, src/vec/vec_turbo_boot.asm): порт 45h, б7 = 1 только в кадровый импульс —
+; за 16К опросов на Турбо+ 1..32 фронта, на 06Ц ни одного (мусор шины дал бы сотни). На Турбо+: 40h = 41h = 0
+; (CP/M оставляет E000..FFFF в СОЗУ), 46h = 0 (маска записи 0, сигналы STACK/RET — без них нет стекового режима
+; квазидиска), 43h = 0Fh (экран 256x256), 42h = 60h (окно порта 0x10 = A000..DFFF), 44h = 0 — 12 МГц: темп игры
+; держат кадры. Стековый режим игры — только PUSH/POP, без call/ret и прерываний (стенд TURBOCHK=1), поэтому
+; другой правки игре не нужно.
+turbo_init:		ld		de, 0x4000
+				in		a, (0x45)
+				and		0x80
+				ld		b, a
+				ld		c, 0
+ti_l:			in		a, (0x45)
+				and		0x80
+				cp		b
+				jp		z, ti_0
+				ld		b, a
+				or		a
+				jp		z, ti_0
+				inc		c
+				jp		nz, ti_0
+				dec		c
+ti_0:			dec		de
+				ld		a, d
+				or		e
+				jp		nz, ti_l
+				ld		a, c
+				or		a
+				ret		z						; Вектор-06Ц
+				cp		33
+				ret		nc						; мусор шины
+				xor		a
+				out		(0x40), a
+				out		(0x41), a
+				out		(0x46), a
+				ld		a, 0x0f
+				out		(0x43), a
+				ld		a, 0x60
+				out		(0x42), a
+				xor		a
+				out		(0x44), a
+				ret
+
 ld_payload:
 				DISP	LD_ORG
-ld_start:		ld		sp, LD_ORG
+ld_start:		ld		sp, 0
 				ld		a, 0xfb					; прерывание на время загрузки: ei; ret
 				ld		(0x38), a
 				ld		a, 0xc9
@@ -49,6 +94,8 @@ lc_l:			ld		(hl), 0
 				ld		a, 0x34					; дискета: сторона 0, к дорожке начала данных
 				ld		(fd_ctl), a
 				call	fd_restore
+				call	fd_rdy					; один раз: дальше мотор крутится (FORCE INTERRUPT на каждый
+												; сектор стоил бы оборота диска — 0,2 с на сектор)
 				ld		a, FL_SIDE
 				or		a
 				jp		z, ls_s0
@@ -91,10 +138,9 @@ ls_done:
 				ld		c, 32					; прерывания 0x38) — последним на дискете, после чтения — DI
 lr_l:			push	bc
 				push	hl
-				call	fd_next
+				call	fd_next					; HL — сектор в буфере
 				di
 				pop		de
-				ld		hl, LD_BUF				; буфер -> память
 				ld		bc, 1024
 lr_cp:			ld		a, (hl)
 				ld		(de), a
@@ -134,6 +180,7 @@ ld_kvaz:		rlca
 lk_l:			push	bc
 				push	hl
 				call	fd_next
+				ld		(lk_src), hl
 				pop		hl
 				push	hl
 				ld		de, 1024				; push пишет вниз: SP = конец куска
@@ -147,7 +194,9 @@ lk_l:			push	bc
 				ld		sp, hl
 				ld		a, (lk_port)
 				out		(0x10), a
-				ld		hl, LD_BUF + 1023
+				ld		hl, (lk_src)
+				ld		bc, 1023
+				add		hl, bc
 				ld		c, 0					; 512 слов: C = 0 -> 256 x 2
 				ld		b, 2
 lk_p:			ld		d, (hl)
@@ -176,6 +225,7 @@ lk_p:			ld		d, (hl)
 				ret
 lk_port:		DB		0
 lk_dst:			DW		0
+lk_src:			DW		0
 lk_sp:			DW		0
 
 ; заставка из стр. 0 (как splash.asm), палитра, рамка полоски
@@ -297,27 +347,52 @@ ld_black:		DS		16, 0
 				INCLUDE	"../../build/game/splash.inc"	; pal_splash, SPLASH_P01, SPLASH_P2
 
 ; ---- ВГ93 (как vec_fdd.asm Ianna) ----
-; следующий сектор данных -> LD_BUF; сторона 0 (1..5), сторона 1 (1..5), шаг на следующую дорожку
-fd_next:		ld		a, (fd_sec)
+; следующий сектор данных -> HL (в TRK_BUF). Секторы стороны дорожки читаются ПОДРЯД, все оставшиеся (до 5), и
+; уже потом разбираются: перенос сектора в квазидиск между чтениями (~3 мс на 12 МГц, больше на 3 МГц) дольше
+; промежутка между секторами — следующий сектор уходил из-под головки, и на каждый ждали оборот диска (0,2 с).
+fd_next:		ld		a, (fd_left)
+				or		a
+				jp		nz, fn_take
+				ld		hl, TRK_BUF
+				ld		(fd_ptr), hl
+fn_rd:			ld		a, (fd_sec)
 				ld		c, a
-				ld		hl, LD_BUF
+				push	hl
 				call	fd_read
+				pop		hl
+				ld		de, 1024
+				add		hl, de
+				ld		a, (fd_left)
+				inc		a
+				ld		(fd_left), a
 				ld		a, (fd_sec)
 				inc		a
 				ld		(fd_sec), a
 				cp		6
-				ret		nz
-				ld		a, 1
+				jp		nz, fn_rd
+				ld		a, 1					; сторона прочитана: следующая сторона или дорожка
 				ld		(fd_sec), a
 				ld		a, (fd_ctl)
 				xor		4
 				ld		(fd_ctl), a
 				call	fd_ctlw
 				and		4
-				ret		z						; перешли на сторону 1 — дорожка та же
+				jp		z, fn_take				; перешли на сторону 1 — дорожка та же
 				ld		a, 0x58
 				out		(0x1b), a
-				jp		fd_wait
+				call	fd_wait
+fn_take:		ld		a, (fd_left)
+				dec		a
+				ld		(fd_left), a
+				ld		hl, (fd_ptr)
+				push	hl
+				ld		de, 1024
+				add		hl, de
+				ld		(fd_ptr), hl
+				pop		hl
+				ret
+fd_left:		DB		0
+fd_ptr:			DW		TRK_BUF
 fd_read:		di								; сектор C -> (HL), 1024 Б
 				call	fd_ctlw
 				ld		a, c
@@ -375,6 +450,31 @@ fw_l:			in		a, (0x1b)
 fw_ok:			pop		de
 				pop		bc
 				ret
+; готовность привода перед первым чтением (как vfl_ready Ianna): после простоя мотор стоит — READ SECTOR без
+; READY обрывается за считанные такты, и на 12 МГц (Турбо+) цикл ждал бы BUSY вечно. FORCE INTERRUPT, пауза,
+; ждать б7 статуса = 0 со счётчиком (~8 с на 3 МГц, ~2 с на 12 МГц; без дискеты — дальше как было)
+fd_rdy:			ld		a, 0xd0
+				out		(0x1b), a
+				push	bc
+				push	de
+				ld		a, 40
+fy_p:			dec		a
+				jp		nz, fy_p
+				ld		d, 8
+				ld		bc, 0
+fy_l:			in		a, (0x1b)
+				rla
+				jp		nc, fy_ok
+				dec		bc
+				ld		a, b
+				or		c
+				jp		nz, fy_l
+				dec		d
+				jp		nz, fy_l
+fy_ok:			pop		de
+				pop		bc
+				ret
+
 fd_ctl:			DB		0x34
 fd_sec:			DB		1
 
@@ -406,4 +506,4 @@ stub_end:
 file_end:
 ld_start_f		equ		ld_payload
 stub_rt			equ		LD_ORG + (stub_file - ld_payload)
-				ASSERT	LD_ORG + (file_end - ld_payload) <= LD_BUF
+				ASSERT	LD_ORG + (file_end - ld_payload) <= 0xFF00	; выше — стек

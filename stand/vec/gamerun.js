@@ -6,6 +6,7 @@
 "use strict";
 const fs = require("fs"), vm = require("vm");
 const base = process.env.V06JS || require("path").join(require("os").homedir(), "projects/vector06js");
+const TCHK = !!process.env.TURBOCHK; let kvp = 0, tstk = 0; const tviol = {};   // TURBOCHK=1: call/ret/rst/ei/halt и прерывания при стековом режиме порта 10h (на Турбо+ идут мимо квазидиска)
 const [NF, OUTDIR, SCRIPT] = process.argv.slice(2);
 const ROOTD = require('path').join(__dirname, '../..');
 const ROM = ROOTD + '/build/game/aticatac.rom', SYM = ROOTD + '/build/game/aticatac.sym';
@@ -144,15 +145,19 @@ while (frames < N) {
   if (cpu.pc === S.zero_leftover) nRep++; else if (cpu.pc === S.ou_xor) nXor++; else if (cpu.pc === S.ou_newonly) nNew++;
   if (cpu.pc === S.logic_step) { loops++; if (lastT) tickT.push(total - lastT); lastT = total; }
   if (irqUntil >= 0) {
-    if (cpu.iff) { v06c.irq = true; v06c.checkInterrupt(); irqUntil = -1; irqOk++; }
+    if (cpu.iff) { if (TCHK && (kvp & 0x10)) { const n = 'прерывание в ' + nmOf(cpu.pc).split('+')[0]; tviol[n] = (tviol[n] || 0) + 1; } v06c.irq = true; v06c.checkInterrupt(); irqUntil = -1; irqOk++; }
     else if (frc >= irqUntil) { irqUntil = -1; irqLost++; const n = nmOf(cpu.pc).split('+')[0]; lostAt[n] = (lostAt[n] || 0) + 1; if (process.env.LOSTDBG && /^bx_|^bo_|^zf_/.test(n)) console.log('потеря в', n, 'кадр', frames, 'di_guard был при такте кадра', lastDg, 'стоимость', rd(S.dg_cost), 'прошло с него', total - lastDgT); }
   }
   const pc0 = cpu.pc;
+  if (TCHK && (kvp & 0x10)) tstk++;
+  if (TCHK && (kvp & 0x10)) { const op = rd(pc0); const k = op === 0xcd || (op & 0xc7) === 0xc4 ? 'call' : op === 0xc9 || (op & 0xc7) === 0xc0 ? 'ret' : (op & 0xc7) === 0xc7 ? 'rst' : op === 0xfb ? 'ei' : op === 0x76 ? 'halt' : null; if (k) { const n = k + ' в ' + nmOf(pc0).split('+')[0]; tviol[n] = (tviol[n] || 0) + 1; } }
   const c = (cpu.instruction(), cpu.vcycles); frc += c; total += c; tacc += c;
   if (process.env.PROF && (!process.env.PROFR || (process.env.PROFR === '1' ? fnOpen[S.render_sprites] : upd))) { let n = profCache.get(pc0); if (!n) { n = nmOf(pc0).split('+')[0]; profCache.set(pc0, n); } prof[n] = (prof[n] || 0) + c; }
   if (tacc > 1) { const tn = tacc >> 1; tacc -= tn * 2; timer.Count(tn); }
+  if (cpu.last_opcode === 0xd3 && memory.bytes[memory.tobank((cpu.pc - 1) & 0xffff)] === 0x10) kvp = cpu.a();
   if (cpu.last_opcode === 0xd3) { if (process.env.SNDT) { const port = memory.bytes[memory.tobank((cpu.pc - 1) & 0xffff)]; sndOut[port] = (sndOut[port] || 0) + 1; if (port === 0x15) ayReg = cpu.a() & 15; else if (port === 0x14) ayShadow[ayReg] = cpu.a(); else if (port === 0x0A || port === 0x09) { const k = port === 0x0A ? 1 : 2; viB[k].push(cpu.a()); if (viB[k].length === 2) { viLog.push([frames, k, viB[k][0] | viB[k][1] << 8]); viB[k] = []; } } else if (port === 8) { const v = cpu.a(); if ((v & 0xc0) === 0x40 || (v & 0xc0) === 0x80) { const k = v >> 6; viB[k] = []; if ((v & 0x0e) === 0) viLog.push([frames, k, 0]); } } } io.commit(); }
 }
+if (TCHK) console.log('Турбо+ (стековый режим квазидиска, команд ' + tstk + '): ' + (Object.keys(tviol).length ? 'НАРУШЕНИЯ ' + JSON.stringify(tviol) : 'нарушений нет'));
 if (process.env.PROF) { const tot = Object.values(prof).reduce((a, b) => a + b, 0); for (const [k, v] of Object.entries(prof).sort((a, b) => b[1] - a[1]).slice(0, +process.env.PROFN || 18)) console.log(k.padEnd(22), (v / tot * 100).toFixed(1) + '%', (v / 59904).toFixed(1) + ' кадра'); }
 if (process.env.LOOPST) {
   const q = (a, f) => { a = a.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(a.length * f))]; };
