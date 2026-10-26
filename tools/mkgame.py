@@ -292,19 +292,30 @@ def vec_cols(pixrow_fn, ncols, rows):
                 col.append(v)
             out[(c, k)] = col
     return out
+def vec_cols_hi(hi, ncols):
+    """то же по строкам точек Вектора (после pixsmooth.smooth2x): hi[y][x], x < 8 * ncols"""
+    return {(c, k): bytearray(sum(0x80 >> j for j in range(8) if (SLOT[hi[y][c * 8 + j]] >> (NPL - 1 - k)) & 1)
+                          for y in range(len(hi))) for c in range(ncols) for k in range(NPL)}
+def cpc_pens(src, x0, nbytes, y0, rows):
+    return [[p for i in range(nbytes) for p in mode0(src(x0 + i, y0 + y))] for y in range(rows)]
 def cpc_row_pens(src, x0, nbytes):
     return lambda y: [p for i in range(nbytes) for p in mode0(src(x0 + i, y))]
 PANEL_ADDR = (BGF_ADDR + len(bgf) + 15) & ~15
-pc = vec_cols(cpc_row_pens(cbyte, 48, 16), 8, 192)
+pan_rows = cpc_pens(cbyte, 48, 16, 0, 192)
+pan_hi = pixsmooth.smooth2x(pan_rows, holes=True)  # свиток сглажен; надписи «Scroll», TIME, SCORE и поле цифр —
+for y in range(10, 89):                             # без сглаживания (мелкий текст портится)
+    for x in range(3, 28): pan_hi[y][2 * x] = pan_hi[y][2 * x + 1] = pan_rows[y][x]
+pc = vec_cols_hi(pan_hi, 8)
 panel_blob = bytearray()
 for k in range(NPL):
     for c in range(8): panel_blob += pc[(c, k)]
 CHICK_ADDR = PANEL_ADDR + len(panel_blob)
 chick = bytearray()
 for base in (S['chicken_full'], S['chicken_empty']):
+    rows = [[p for i in range(12) for p in mode0(items[base - 0x4000 + a * 12 + i])] for a in range(30)]
+    hi = pixsmooth.smooth2x(rows, holes=True)
     for a in range(30):
-        row = [p for i in range(12) for p in mode0(items[base - 0x4000 + a * 12 + i])]
-        cc = vec_cols(lambda y: row, 6, 1)
+        cc = vec_cols_hi(hi[a:a + 1], 6)
         for k in range(NPL):
             for c in range(6): chick += cc[(c, k)]
 assert CHICK_ADDR + len(chick) <= 0x10000
@@ -312,7 +323,7 @@ glyph = ['glyphs:\t; цифры 0..9 и «:» (шрифт CPC банка пре�
 for ch in range(11):
     g = S['font_0'] - 0x4000 + 16 * ch
     rows = [[p for i in range(2) for p in mode0(items[g + 2 * y + i])] for y in range(8)]
-    gc = vec_cols(lambda y: rows[y], 1, 8)
+    gc = vec_cols_hi(pixsmooth.smooth2x(rows, holes=True), 1)
     glyph.append('\tDB ' + ', '.join('0x%02X' % b for k in range(NPL) for b in gc[(0, k)]))
 inc += glyph
 inc.append('PANEL_ADDR\tequ 0x%04X\nCHICK_ADDR\tequ 0x%04X' % (PANEL_ADDR, CHICK_ADDR))
@@ -365,7 +376,7 @@ LIVES_ADDR = MENU_ADDR + len(menu_blob)
 for name in ('', '_1', '_2'):
     ph = open(os.path.join(rr.ROOT, 'build/game/panel_cpc%s.bin' % name), 'rb').read()[:0x4000]
     hb = lambda x, y, ph=ph: ph[(y >> 3) * 64 + (y & 7) * 0x800 + x]
-    lc = vec_cols(lambda y: [p for i in range(16) for p in mode0(hb(48 + i, LIVES_Y0 + y))], 8, LIVES_N)
+    lc = vec_cols_hi(pixsmooth.smooth2x(cpc_pens(hb, 48, 16, LIVES_Y0, LIVES_N), holes=True), 8)
     for k in range(NPL):
         for c in range(8): menu_blob += lc[(c, k)]
 FONT_ADDR = MENU_ADDR + len(menu_blob)
